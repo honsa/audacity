@@ -94,4 +94,4 @@ target_sources( ${TARGET} PRIVATE ${SOURCES} )
 target_compile_definitions( ${TARGET} PRIVATE ${DEFINES} )
 target_compile_options( ${TARGET} PRIVATE ${OPTIONS} )
 target_include_directories( ${TARGET} PRIVATE ${INCLUDES} )
-
+set_target_properties(${TARGET} PROPERTIES POSITION_INDEPENDENT_CODE On)

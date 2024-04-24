@@ -11,7 +11,7 @@
 \class PrefsPanel
 \brief Base class for a panel in the PrefsDialog.  Classes derived from 
 this class include BatchPrefs, DirectoriesPrefs, GUIPrefs, KeyConfigPrefs, 
-MousePrefs, QualityPrefs, SpectrumPrefs and ThemePrefs.
+QualityPrefs, SpectrumPrefs and ThemePrefs.
 
   The interface works like this: Each panel in the preferences dialog
   must derive from PrefsPanel. You must override Apply() with code
@@ -28,9 +28,9 @@ MousePrefs, QualityPrefs, SpectrumPrefs and ThemePrefs.
 #define __AUDACITY_PREFS_PANEL__
 
 #include <functional>
-#include "../widgets/wxPanelWrapper.h" // to inherit
-#include "../include/audacity/ComponentInterface.h"
-#include "../Registry.h"
+#include "wxPanelWrapper.h" // to inherit
+#include "ComponentInterface.h"
+#include "Registry.h"
 
 /* A few constants for an attempt at semi-uniformity */
 #define PREFS_FONT_SIZE     8
@@ -46,8 +46,11 @@ MousePrefs, QualityPrefs, SpectrumPrefs and ThemePrefs.
 class AudacityProject;
 class ShuttleGui;
 
-class PrefsPanel /* not final */ : public wxPanelWrapper, ComponentInterface
+class AUDACITY_DLL_API PrefsPanel /* not final */
+   : public wxPanelWrapper, ComponentInterface
 {
+   struct PrefsItem;
+
  public:
     // An array of PrefsNode specifies the tree of pages in pre-order traversal.
     struct PrefsNode {
@@ -57,6 +60,7 @@ class PrefsPanel /* not final */ : public wxPanelWrapper, ComponentInterface
        Factory factory;
        size_t nChildren{ 0 };
        bool expanded{ false };
+       mutable bool enabled{ true };
 
        PrefsNode(const Factory &factory_,
           unsigned nChildren_ = 0,
@@ -79,7 +83,8 @@ class PrefsPanel /* not final */ : public wxPanelWrapper, ComponentInterface
 
    // Typically you make a static object of this type in the .cpp file that
    // also implements the PrefsPanel subclass.
-   struct Registration final
+   struct AUDACITY_DLL_API Registration final
+      : Registry::RegisteredItem<PrefsItem>
    {
       Registration( const wxString &name, const Factory &factory,
          bool expanded = true,
@@ -101,9 +106,9 @@ class PrefsPanel /* not final */ : public wxPanelWrapper, ComponentInterface
    virtual bool Commit() = 0; // used to be called "Apply"
 
 
-   virtual PluginPath GetPath();
-   virtual VendorSymbol GetVendor();
-   virtual wxString GetVersion();
+   virtual PluginPath GetPath() const override;
+   virtual VendorSymbol GetVendor() const override;
+   virtual wxString GetVersion() const override;
 
    //virtual ComponentInterfaceSymbol GetSymbol();
    //virtual wxString GetDescription();
@@ -114,11 +119,28 @@ class PrefsPanel /* not final */ : public wxPanelWrapper, ComponentInterface
    virtual bool ShowsPreviewButton();
    virtual void PopulateOrExchange( ShuttleGui & WXUNUSED(S) ){};
 
-   // If not empty string, the Help button is added below the panel
-   // Default returns empty string.
-   virtual wxString HelpPageName();
+   //! If not empty string, the Help button is added below the panel
+   /*! Default returns empty string. */
+   virtual ManualPageID HelpPageName();
 
    virtual void Cancel();
+
+ private:
+   struct Traits : Registry::DefaultTraits {
+      using NodeTypes = List<PrefsItem>;
+   };
+   struct AUDACITY_DLL_API PrefsItem final
+      : Registry::GroupItem<Traits> {
+      PrefsPanel::Factory factory;
+      bool expanded{ false };
+
+      static Registry::GroupItem<Traits> &Registry();
+
+      PrefsItem(const wxString &name,
+         const PrefsPanel::Factory &factory, bool expanded);
+
+      struct Visitor;
+   };
 };
 
 #endif

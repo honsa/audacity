@@ -1,19 +1,20 @@
 # Include the modules that we'll build
 
-if( NOT CMAKE_SYSTEM_NAME MATCHES "Windows" )
-add_subdirectory( mod-null )
-add_subdirectory( mod-nyq-bench )
-endif()
+# The list of module sub-folders is ordered so that each folder occurs after any
+# others that it depends on
+set( FOLDERS
+   etc
+   import-export
+   track-ui
+   scripting
+   nyquist
+   sharing
+)
 
-add_subdirectory( mod-script-pipe )
+foreach( FOLDER ${FOLDERS} )
+   add_subdirectory("${FOLDER}")
+endforeach()
 
-
-if( NOT CMAKE_SYSTEM_NAME MATCHES "Darwin" )
-   if( NOT "${CMAKE_GENERATOR}" MATCHES "Visual Studio*")
-      install( DIRECTORY "${_DEST}/modules"
-               DESTINATION "${_PKGLIB}" )
-   endif()
-endif()
-
-#propagate collected edges up to root CMakeLists.txt
+#propagate collected edges and subgraphs up to root CMakeLists.txt
 set( GRAPH_EDGES "${GRAPH_EDGES}" PARENT_SCOPE )
+set( GRAPH_SUBGRAPHS "${GRAPH_SUBGRAPHS}" PARENT_SCOPE )
