@@ -1,6 +1,6 @@
 #[[
 A library of mathematical utilities and manipulation of samples
-]]#
+]]
 
 addlib( libsoxr            soxr        SOXR        YES   YES   "soxr >= 0.1.1" )
 
@@ -14,6 +14,7 @@ set( SOURCES
    Matrix.h
    Resample.cpp
    Resample.h
+   RoundUpUnsafe.h
    SampleCount.cpp
    SampleCount.h
    SampleFormat.cpp

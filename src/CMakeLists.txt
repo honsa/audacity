@@ -1,3 +1,6 @@
+#[[
+Configure the executable, modules, and libraries
+]]
 
 set( TARGET Audacity )
 set( TARGET_ROOT ${topdir}/src )
@@ -54,7 +57,7 @@ set( USE_VST ${${_OPT}use_vst} CACHE INTERNAL "" )
 #
 #
 #
-list( APPEND SOURCES
+set( SOURCES
    PRIVATE
       ActiveProject.cpp
       ActiveProject.h
@@ -190,8 +193,6 @@ list( APPEND SOURCES
       SpectrumAnalyst.h
       SpectrumTransformer.cpp
       SpectrumTransformer.h
-      SplashDialog.cpp
-      SplashDialog.h
       SseMathFuncs.cpp
       SseMathFuncs.h
       TagsEditor.cpp
@@ -237,6 +238,11 @@ list( APPEND SOURCES
       VoiceKey.h
       WaveTrackLocation.cpp
       WaveTrackLocation.h
+
+      $<$<BOOL:${_OPT}has_whats_new>:
+         WhatsNewDialog.cpp
+         WhatsNewDialog.h
+      >
 
       # Commands
 
@@ -327,14 +333,25 @@ list( APPEND SOURCES
       effects/ChangeTempo.h
       effects/ClickRemoval.cpp
       effects/ClickRemoval.h
-      effects/Compressor.cpp
-      effects/Compressor.h
+      effects/CompressionMeterPanel.cpp
+      effects/CompressionMeterPanel.h
       effects/Contrast.cpp
       effects/Contrast.h
       effects/Distortion.cpp
       effects/Distortion.h
       effects/DtmfGen.cpp
       effects/DtmfGen.h
+      effects/DynamicRangeProcessorDummyOutputs.h
+      effects/DynamicRangeProcessorEditor.cpp
+      effects/DynamicRangeProcessorEditor.h
+      effects/DynamicRangeProcessorEffectUtils.cpp
+      effects/DynamicRangeProcessorEffectUtils.h
+      effects/DynamicRangeProcessorHistoryPanel.cpp
+      effects/DynamicRangeProcessorHistoryPanel.h
+      effects/DynamicRangeProcessorPanelCommon.cpp
+      effects/DynamicRangeProcessorPanelCommon.h
+      effects/DynamicRangeProcessorTransferFunctionPanel.cpp
+      effects/DynamicRangeProcessorTransferFunctionPanel.h
       effects/EBUR128.cpp
       effects/EBUR128.h
       effects/Echo.cpp
@@ -378,6 +395,10 @@ list( APPEND SOURCES
       effects/Generator.h
       effects/Invert.cpp
       effects/Invert.h
+      effects/Limiter.cpp
+      effects/Limiter.h
+      effects/LimiterEditor.cpp
+      effects/LimiterEditor.h
       effects/Loudness.cpp
       effects/Loudness.h
       effects/Noise.cpp
@@ -390,8 +411,14 @@ list( APPEND SOURCES
       effects/Paulstretch.h
       effects/Phaser.cpp
       effects/Phaser.h
-      effects/RealtimeEffectStateUI.h
+      effects/Compressor.cpp
+      effects/Compressor.h
+      effects/CompressorEditor.cpp
+      effects/CompressorEditor.h
+      effects/CompressorInstance.cpp
+      effects/CompressorInstance.h
       effects/RealtimeEffectStateUI.cpp
+      effects/RealtimeEffectStateUI.h
       effects/Repair.cpp
       effects/Repair.h
       effects/Repeat.cpp
@@ -606,8 +633,6 @@ list( APPEND SOURCES
       prefs/ImportExportPrefs.h
       prefs/KeyConfigPrefs.cpp
       prefs/KeyConfigPrefs.h
-      prefs/LibraryPrefs.cpp
-      prefs/LibraryPrefs.h
       prefs/MidiIOPrefs.cpp
       prefs/MidiIOPrefs.h
       prefs/ModulePrefs.cpp
@@ -616,8 +641,6 @@ list( APPEND SOURCES
       prefs/PlaybackPrefs.h
       prefs/PrefsDialog.cpp
       prefs/PrefsDialog.h
-      prefs/PrefsPanel.cpp
-      prefs/PrefsPanel.h
       prefs/QualityPrefs.cpp
       prefs/QualityPrefs.h
       prefs/RecordingPrefs.cpp
@@ -632,8 +655,6 @@ list( APPEND SOURCES
       prefs/TracksBehaviorsPrefs.h
       prefs/TracksPrefs.cpp
       prefs/TracksPrefs.h
-      prefs/WarningsPrefs.cpp
-      prefs/WarningsPrefs.h
       prefs/WaveformPrefs.cpp
       prefs/WaveformPrefs.h
       prefs/WaveformSettings.cpp
@@ -724,8 +745,6 @@ list( APPEND SOURCES
       tracks/playabletrack/wavetrack/ui/ClipPitchAndSpeedButtonHandle.h
       tracks/playabletrack/wavetrack/ui/CutlineHandle.cpp
       tracks/playabletrack/wavetrack/ui/CutlineHandle.h
-      tracks/playabletrack/wavetrack/ui/GetWaveDisplay.cpp
-      tracks/playabletrack/wavetrack/ui/GetWaveDisplay.h
       tracks/playabletrack/wavetrack/ui/HighlitClipButtonHandle.cpp
       tracks/playabletrack/wavetrack/ui/HighlitClipButtonHandle.h
       tracks/playabletrack/wavetrack/ui/LowlitClipButton.cpp
@@ -771,8 +790,6 @@ list( APPEND SOURCES
       tracks/playabletrack/wavetrack/ui/WaveformVRulerControls.h
       tracks/playabletrack/wavetrack/ui/WaveformVZoomHandle.cpp
       tracks/playabletrack/wavetrack/ui/WaveformVZoomHandle.h
-      tracks/playabletrack/wavetrack/ui/WaveformCache.cpp
-      tracks/playabletrack/wavetrack/ui/WaveformCache.h
       tracks/playabletrack/wavetrack/ui/WaveformView.cpp
       tracks/playabletrack/wavetrack/ui/WaveformView.h
       tracks/timetrack/ui/TimeTrackControls.cpp
@@ -938,14 +955,14 @@ list( APPEND SOURCES
 #
 #
 #
-list( APPEND HEADERS
+set( HEADERS
    ../include/audacity/Types.h
 )
 
 #
 #
 #
-list( APPEND INCLUDES
+set( INCLUDES
    PUBLIC
       ${_PRVDIR}
       ${topdir}/include
@@ -955,14 +972,14 @@ list( APPEND INCLUDES
 #
 # Define resources
 #
-list( APPEND RESOURCES
+set( RESOURCES
    ${topdir}/resources/EffectsMenuDefaults.xml
 )
 
 #
 #
 #
-list( APPEND DEFINES
+set( DEFINES
    PRIVATE
       BUILDING_AUDACITY
       WXUSINGDLL
@@ -1002,7 +1019,7 @@ endif()
 
 audacity_append_common_compiler_options( OPTIONS "${${_OPT}use_pch}" )
 
-list( APPEND LDFLAGS
+set( LDFLAGS
    PRIVATE
       $<$<CXX_COMPILER_ID:MSVC>:/MANIFEST:NO>
       $<$<CXX_COMPILER_ID:GNU>:-Wl,--disable-new-dtags>
@@ -1063,7 +1080,7 @@ endif()
 
 if( CMAKE_SYSTEM_NAME MATCHES "Windows" )
    # Define the Windows specific resources
-   list( APPEND WIN_RESOURCES
+   set( WIN_RESOURCES
       ../win/audacity.rc
    )
 
@@ -1112,7 +1129,7 @@ elseif( CMAKE_SYSTEM_NAME MATCHES "Darwin" )
    endif()
 
    # Define Mac specific resources
-   list( APPEND MAC_RESOURCES
+   set( MAC_RESOURCES
       ../mac/Resources/Audacity.icns
       ../mac/Resources/AudacityAIFF.icns
       ../mac/Resources/AudacityAU.icns
@@ -1251,17 +1268,19 @@ else()
    # Create the desktop file
    configure_file( audacity.desktop.in ${_INTDIR}/audacity.desktop )
 
-   add_executable(findlib ../linux/findlib.c)
-   target_link_libraries(findlib ${CMAKE_DL_LIBS})
-   set_target_property_all( findlib SKIP_BUILD_RPATH On )
-   set_target_property_all( findlib RUNTIME_OUTPUT_DIRECTORY "${_DESTDIR}/${_EXEDIR}" )
+   if( CMAKE_SYSTEM_NAME MATCHES "Linux" )
+      add_executable(findlib ../linux/findlib.c)
+      target_link_libraries(findlib ${CMAKE_DL_LIBS})
+      set_target_property_all( findlib SKIP_BUILD_RPATH On )
+      set_target_property_all( findlib RUNTIME_OUTPUT_DIRECTORY "${_DESTDIR}/${_EXEDIR}" )
+   endif()
 endif()
 
 if(CRASH_REPORT_URL)
     list(APPEND DEFINES PRIVATE -DCRASH_REPORT_URL="${CRASH_REPORT_URL}")
 endif()
 
-if(SHOW_WHATS_NEW_SECTION)
+if(${_OPT}has_whats_new)
    list(APPEND DEFINES PRIVATE HAS_WHATS_NEW )
 endif()
 
@@ -1313,7 +1332,10 @@ set( AUDACITY_LIBRARIES
    lib-menus-interface
    lib-note-track-interface
    lib-viewport-interface
+   lib-wave-track-paint-interface
    lib-music-information-retrieval-interface
+   lib-preference-pages-interface
+   lib-dynamic-range-processor-interface
 )
 
 if (USE_VST)
@@ -1353,6 +1375,12 @@ endif()
 if( ${_OPT}has_url_schemes_support )
    list( APPEND AUDACITY_LIBRARIES
       lib-url-schemes-interface
+   )
+endif()
+
+if( ${_OPT}has_audiocom_upload )
+   list( APPEND AUDACITY_LIBRARIES
+      lib-cloud-audiocom-interface
    )
 endif()
 

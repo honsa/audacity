@@ -1,3 +1,7 @@
+#[[
+FFmpeg import and export
+]]
+
 set( TARGET mod-ffmpeg )
 
 add_subdirectory(lib-ffmpeg-support)
@@ -17,8 +21,11 @@ set( SOURCES
 
 set( LIBRARIES
    PRIVATE
-      lib-ffmpeg-support
-      Audacity
+      lib-export-ui-interface
+      lib-ffmpeg-support-interface
+      lib-import-export-interface
+      lib-preference-pages-interface
+      lib-wx-init-interface
 )
 
 set (EXTRA_CLUSTER_NODES "${LIBRARIES}" PARENT_SCOPE)

@@ -1,3 +1,7 @@
+#[[
+A directory containing library targets
+]]
+
 # Include the libraries that we'll build
 
 # The list of modules is ordered so that each library occurs after any others
@@ -37,6 +41,7 @@ set( LIBRARIES
    lib-realtime-effects
    lib-audio-io
    lib-wave-track
+   lib-wave-track-paint
    lib-track-selection
    lib-project-file-io
    lib-command-parameters
@@ -65,6 +70,8 @@ set( LIBRARIES
    lib-fft
    lib-concurrency
    lib-sqlite-helpers
+   lib-preference-pages
+   lib-dynamic-range-processor
 )
 
 if ( ${_OPT}use_lv2 )

@@ -1,3 +1,6 @@
+#[[
+Various versions of FFmpeg and a facade to hide their binary incompatibilities
+]]
 
 if (${_OPT}use_ffmpeg)
    set( SOURCES
@@ -110,7 +113,6 @@ if (${_OPT}use_ffmpeg)
    )
 
    set( LIBRARIES
-      PRIVATE
       lib-files
       lib-math
    )

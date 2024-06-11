@@ -1,0 +1,13 @@
+<RCC>
+    <qresource prefix="/">
+        <file>qml/Audacity/Playback/PlaybackToolBar.qml</file>
+        <file>qml/Audacity/Playback/internal/CustomiseControlPanel.qml</file>
+        <file>qml/Audacity/Playback/internal/CustomiseView.qml</file>
+        <file>qml/Audacity/Playback/internal/PlaybackToolBarActionDelegate.qml</file>
+        <file>qml/Audacity/Playback/internal/PlaybackToolBarCustomisePopup.qml</file>
+        <file>qml/Audacity/Playback/qmldir</file>
+        <file>qml/Audacity/Playback/internal/PlaybackLevel.qml</file>
+        <file>qml/Audacity/Playback/components/VolumePressureMeter.qml</file>
+        <file>qml/Audacity/Playback/components/VolumeSlider.qml</file>
+    </qresource>
+</RCC>

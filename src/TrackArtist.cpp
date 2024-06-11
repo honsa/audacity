@@ -87,7 +87,6 @@ void TrackArtist::SetColours( int iColorIndex)
    theTheme.SetPenColour(   muteSamplePen,   clrMuteSample);
    theTheme.SetPenColour(   odProgressDonePen, clrProgressDone);
    theTheme.SetPenColour(   odProgressNotYetPen, clrProgressNotYet);
-   theTheme.SetPenColour(   shadowPen,       clrShadow);
    theTheme.SetPenColour(   clippedPen,      clrClipped);
    theTheme.SetPenColour(   muteClippedPen,  clrMuteClipped);
    theTheme.SetPenColour(   blankSelectedPen,clrBlankSelected);
@@ -129,8 +128,6 @@ void TrackArtist::UpdateSelectedPrefs( int id )
 {
    if( id == ShowClippingPrefsID())
       mShowClipping = gPrefs->Read(wxT("/GUI/ShowClipping"), mShowClipping);
-   if( id == ShowTrackNameInWaveformPrefsID())
-      mbShowTrackNameInTrack = gPrefs->ReadBool(wxT("/GUI/ShowTrackNameInWaveform"), false);
 }
 
 void TrackArtist::UpdatePrefs()
@@ -139,7 +136,6 @@ void TrackArtist::UpdatePrefs()
    mSampleDisplay = TracksPrefs::SampleViewChoice();
 
    UpdateSelectedPrefs( ShowClippingPrefsID() );
-   UpdateSelectedPrefs( ShowTrackNameInWaveformPrefsID() );
 
    SetColours(0);
 }

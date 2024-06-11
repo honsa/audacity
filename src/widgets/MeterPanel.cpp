@@ -184,69 +184,6 @@ wxString MeterUpdateMsg::toStringIfClipped()
 }
 
 //
-// The MeterPanel passes itself messages via this queue so that it can
-// communicate between the audio thread and the GUI thread.
-// This class uses lock-free synchronization with atomics.
-//
-
-MeterUpdateQueue::MeterUpdateQueue(size_t maxLen):
-   mBufferSize(maxLen)
-{
-   Clear();
-}
-
-// destructor
-MeterUpdateQueue::~MeterUpdateQueue()
-{
-}
-
-void MeterUpdateQueue::Clear()
-{
-   mStart.store(0);
-   mEnd.store(0);
-}
-
-// Add a message to the end of the queue.  Return false if the
-// queue was full.
-bool MeterUpdateQueue::Put(MeterUpdateMsg &msg)
-{
-   auto start = mStart.load(std::memory_order_acquire);
-   auto end = mEnd.load(std::memory_order_relaxed);
-   // mStart can be greater than mEnd because it is all mod mBufferSize
-   assert( (end + mBufferSize - start) >= 0 );
-   int len = (end + mBufferSize - start) % mBufferSize;
-
-   // Never completely fill the queue, because then the
-   // state is ambiguous (mStart==mEnd)
-   if (len + 1 >= (int)(mBufferSize))
-      return false;
-
-   //wxLogDebug(wxT("Put: %s"), msg.toString());
-
-   mBuffer[end] = msg;
-   mEnd.store((end + 1) % mBufferSize, std::memory_order_release);
-
-   return true;
-}
-
-// Get the next message from the start of the queue.
-// Return false if the queue was empty.
-bool MeterUpdateQueue::Get(MeterUpdateMsg &msg)
-{
-   auto start = mStart.load(std::memory_order_relaxed);
-   auto end = mEnd.load(std::memory_order_acquire);
-   int len = (end + mBufferSize - start) % mBufferSize;
-
-   if (len == 0)
-      return false;
-
-   msg = mBuffer[start];
-   mStart.store((start + 1) % mBufferSize, std::memory_order_release);
-
-   return true;
-}
-
-//
 // MeterPanel class
 //
 
@@ -363,7 +300,6 @@ MeterPanel::MeterPanel(AudacityProject *project,
    SetBackgroundColour( backgroundColour );
 
    mPeakPeakPen = wxPen(theTheme.Colour( clrMeterPeak),        1, wxPENSTYLE_SOLID);
-   mDisabledPen = wxPen(theTheme.Colour( clrMeterDisabledPen), 1, wxPENSTYLE_SOLID);
 
    mAudioIOStatusSubscription = AudioIO::Get()
       ->Subscribe(*this, &MeterPanel::OnAudioIOStatus);
@@ -388,10 +324,6 @@ MeterPanel::MeterPanel(AudacityProject *project,
 //      mDarkPen   = wxPen(   theTheme.Colour( clrMeterOutputDarkPen    ), 1, wxSOLID);
    }
 
-//   mDisabledBkgndBrush = wxBrush(theTheme.Colour( clrMeterDisabledBrush), wxSOLID);
-   // No longer show a difference in the background colour when not monitoring.
-   // We have the tip instead.
-   mDisabledBkgndBrush = mBkgndBrush;
 
    mTipTimer.SetOwner(this, OnTipTimeoutID);
    mTimer.SetOwner(this, OnMeterUpdateID);
@@ -1719,7 +1651,7 @@ void MeterPanel::DrawMeterBar(wxDC &dc, MeterBar *bar)
          // Draw the peak level
          // +/-1 to include the peak position
          dc.SetPen(*wxTRANSPARENT_PEN);
-         dc.SetBrush(mMeterDisabled ? mDisabledBkgndBrush : mBrush);
+         dc.SetBrush(mBrush);
          if (ht)
          {
             dc.DrawRectangle(x, y + h - ht - 1, w, ht + 1);
@@ -1745,7 +1677,7 @@ void MeterPanel::DrawMeterBar(wxDC &dc, MeterBar *bar)
 
          // Draw the RMS level
          dc.SetPen(*wxTRANSPARENT_PEN);
-         dc.SetBrush(mMeterDisabled ? mDisabledBkgndBrush : mRMSBrush);
+         dc.SetBrush(mRMSBrush);
          if (ht)
          {
             dc.DrawRectangle(x, y + h - ht - 1, w, ht + 1);
@@ -1780,7 +1712,7 @@ void MeterPanel::DrawMeterBar(wxDC &dc, MeterBar *bar)
          // Draw the peak level
          // +1 to include peak position
          dc.SetPen(*wxTRANSPARENT_PEN);
-         dc.SetBrush(mMeterDisabled ? mDisabledBkgndBrush : mBrush);
+         dc.SetBrush(mBrush);
          if (wd)
          {
             dc.DrawRectangle(x, y, wd + 1, h);
@@ -1806,7 +1738,7 @@ void MeterPanel::DrawMeterBar(wxDC &dc, MeterBar *bar)
          // Draw the rms level
          // +1 to include the rms position
          dc.SetPen(*wxTRANSPARENT_PEN);
-         dc.SetBrush(mMeterDisabled ? mDisabledBkgndBrush : mRMSBrush);
+         dc.SetBrush(mRMSBrush);
          if (wd)
          {
             dc.DrawRectangle(x, y, wd + 1, h);
@@ -1838,7 +1770,7 @@ void MeterPanel::DrawMeterBar(wxDC &dc, MeterBar *bar)
       }
       else
       {
-         dc.SetBrush(mMeterDisabled ? mDisabledBkgndBrush : mBkgndBrush);
+         dc.SetBrush(mBkgndBrush);
       }
       dc.SetPen(*wxTRANSPARENT_PEN);
       wxRect r(bar->rClip.GetX() + 1,

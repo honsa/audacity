@@ -2,10 +2,10 @@ name: Build Audacity
 
 on:
   push:
-    paths-ignore: ["**/**.md", "**/**.dox2", "**/**.dox", "**/**.dox.in", "**/LICENSE.txt", "/.github/ISSUE_TEMPLATE/**", "INSTALL", "CHANGELOG.txt", ".editorconfig", ".gitignore", ".gitattributes"]
+    paths-ignore: ["au4/**", "**/**.md", "**/**.dox2", "**/**.dox", "**/**.dox.in", "**/LICENSE.txt", "/.github/ISSUE_TEMPLATE/**", "INSTALL", "CHANGELOG.txt", ".editorconfig", ".gitignore", ".gitattributes"]
 
   pull_request:
-    paths-ignore: ["**/**.md", "**/**.dox2", "**/**.dox", "**/**.dox.in", "**/LICENSE.txt", "/.github/ISSUE_TEMPLATE/**", "INSTALL", "CHANGELOG.txt", ".editorconfig", ".gitignore", ".gitattributes"]
+    paths-ignore: ["au4/**", "**/**.md", "**/**.dox2", "**/**.dox", "**/**.dox.in", "**/LICENSE.txt", "/.github/ISSUE_TEMPLATE/**", "INSTALL", "CHANGELOG.txt", ".editorconfig", ".gitignore", ".gitattributes"]
 
   workflow_dispatch:
     inputs:
@@ -123,10 +123,10 @@ jobs:
           os: ubuntu-20.04
           force_gcc11: false
           postfix: '-20.04'
-        - name: Ubuntu 20.04 AppImage (x86_64, gcc 11)
-          os: ubuntu-20.04
-          force_gcc11: true
-          postfix: '-20.04-gcc11'
+#        - name: Ubuntu 20.04 AppImage (x86_64, gcc 11)
+#          os: ubuntu-20.04
+#          force_gcc11: true
+#          postfix: '-20.04-gcc11'
         - name: Ubuntu 22.04 AppImage (x86_64)
           os: ubuntu-22.04
           force_gcc11: false
@@ -171,24 +171,28 @@ jobs:
           generator: Visual Studio 16 2019
           postfix: '-msvc2019'
           windows_sdk: '10.0.18362.0'
+          skip_tests: false
         - name: Windows MSVC 2019 (x86_64)
           os: windows-2019
           arch: x64
           generator: Visual Studio 16 2019
           postfix: '-msvc2019'
           windows_sdk: '10.0.18362.0'
+          skip_tests: false
         - name: Windows MSVC 2022 (x86)
           os: windows-2022
           arch: x32
           generator: Visual Studio 17 2022
           postfix: '-msvc2022'
           windows_sdk: '10.0.22000.0'
+          skip_tests: true
         - name: Windows MSVC 2022 (x86_64)
           os: windows-2022
           arch: x64
           generator: Visual Studio 17 2022
           postfix: '-msvc2022'
           windows_sdk: '10.0.22000.0'
+          skip_tests: true
     steps:
     - name: Checkout Audacity
       uses: actions/checkout@v2
@@ -212,6 +216,7 @@ jobs:
     - name: Build
       uses: audacity/audacity-actions/build@v2
     - name: Test
+      if: ${{ !matrix.config.skip_tests }}
       shell: pwsh
       run: |
         pushd .build.${{ matrix.config.arch }}
