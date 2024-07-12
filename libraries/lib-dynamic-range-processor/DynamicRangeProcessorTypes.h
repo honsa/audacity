@@ -50,9 +50,11 @@ struct Unbypassed
 {
 };
 
+static constexpr auto compressorMeterUpdatePeriodMs = 1000 / 30;
+
 constexpr double compressorThresholdDbDefault = -10;
 constexpr double compressorMakeupGainDbDefault = 0;
-constexpr double compressorKneeWidthDbDefault = 0;
+constexpr double compressorKneeWidthDbDefault = 5;
 constexpr double compressorCompressionRatioDefault = 10;
 constexpr double compressorLookaheadMsDefault = 1;
 constexpr double compressorAttackMsDefault = 30;
@@ -61,15 +63,15 @@ constexpr double compressorMaxLookaheadMs = 1000.;
 
 constexpr double limiterThresholdDbDefault = -5;
 constexpr double limiterMakeupTargetDbDefault = -1;
-constexpr double limiterKneeWidthDbDefault = 0;
+constexpr double limiterKneeWidthDbDefault = 2;
 constexpr double limiterLookaheadMsDefault = 1;
 constexpr double limiterReleaseMsDefault = 20;
 constexpr double limiterMaxLookaheadMs = 50;
 
-constexpr double showInputDefault = 1;
+constexpr double showInputDefault = 0;
 constexpr double showOutputDefault = 1;
-constexpr double showOvershootDefault = 0;
-constexpr double showUndershootDefault = 0;
+constexpr double showActualDefault = 1;
+constexpr double showTargetDefault = 0;
 
 struct CompressorSettings
 {
@@ -82,8 +84,8 @@ struct CompressorSettings
    double releaseMs = compressorReleaseMsDefault;
    double showInput = showInputDefault;
    double showOutput = showOutputDefault;
-   double showOvershoot = showOvershootDefault;
-   double showUndershoot = showUndershootDefault;
+   double showActual = showActualDefault;
+   double showTarget = showTargetDefault;
 };
 
 struct LimiterSettings
@@ -95,8 +97,8 @@ struct LimiterSettings
    double releaseMs = limiterReleaseMsDefault;
    double showInput = showInputDefault;
    double showOutput = showOutputDefault;
-   double showOvershoot = showOvershootDefault;
-   double showUndershoot = showUndershootDefault;
+   double showActual = showActualDefault;
+   double showTarget = showTargetDefault;
 };
 
 struct DynamicRangeProcessorSettings
@@ -112,8 +114,8 @@ struct DynamicRangeProcessorSettings
        , releaseMs { compressorSettings.releaseMs }
        , showInput { compressorSettings.showInput }
        , showOutput { compressorSettings.showOutput }
-       , showOvershoot { compressorSettings.showOvershoot }
-       , showUndershoot { compressorSettings.showUndershoot }
+       , showActual { compressorSettings.showActual }
+       , showTarget { compressorSettings.showTarget }
    {
    }
 
@@ -127,8 +129,8 @@ struct DynamicRangeProcessorSettings
        , releaseMs { limiterSettings.releaseMs }
        , showInput { limiterSettings.showInput }
        , showOutput { limiterSettings.showOutput }
-       , showOvershoot { limiterSettings.showOvershoot }
-       , showUndershoot { limiterSettings.showUndershoot }
+       , showActual { limiterSettings.showActual }
+       , showTarget { limiterSettings.showTarget }
    {
    }
 
@@ -141,8 +143,8 @@ struct DynamicRangeProcessorSettings
    double releaseMs;
    double showInput;
    double showOutput;
-   double showOvershoot;
-   double showUndershoot;
+   double showActual;
+   double showTarget;
 };
 
 constexpr bool operator==(
@@ -156,8 +158,7 @@ constexpr bool operator==(
           lhs.lookaheadMs == rhs.lookaheadMs && lhs.attackMs == rhs.attackMs &&
           lhs.releaseMs == rhs.releaseMs && lhs.showInput == rhs.showInput &&
           lhs.showOutput == rhs.showOutput &&
-          lhs.showOvershoot == rhs.showOvershoot &&
-          lhs.showUndershoot == rhs.showUndershoot;
+          lhs.showActual == rhs.showActual && lhs.showTarget == rhs.showTarget;
 }
 
 constexpr bool operator!=(

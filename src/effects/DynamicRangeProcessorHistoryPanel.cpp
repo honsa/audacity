@@ -11,6 +11,7 @@
 #include "DynamicRangeProcessorHistoryPanel.h"
 #include "AColor.h"
 #include "AllThemeResources.h"
+#include "AudioIO.h"
 #include "CompressorInstance.h"
 #include "DynamicRangeProcessorHistory.h"
 #include "DynamicRangeProcessorPanelCommon.h"
@@ -19,8 +20,11 @@
 #include "widgets/LinearUpdater.h"
 #include "widgets/Ruler.h"
 #include <cassert>
+#include <cmath>
+#include <numeric>
 #include <wx/dcclient.h>
 #include <wx/graphics.h>
+#include <wx/platinfo.h>
 
 namespace
 {
@@ -30,14 +34,17 @@ constexpr auto timerId = 7000;
 // when specifying 200, we get around 60fps on average, with outlier around 40.
 constexpr auto timerPeriodMs = 1000 / 200;
 
-static const wxColor inputColor { 142, 217, 115, 144 };
-static const wxColor outputColor { 103, 124, 228 };
-
-float GetDbRange(int height)
+bool MayUsePenGradients()
 {
-   const auto factor = std::max(
-      1.f, 1.f * height / DynamicRangeProcessorHistoryPanel::minHeight);
-   return factor * DynamicRangeProcessorHistoryPanel::minRangeDb;
+   // MacOS doesn't cope well with pen gradients. (Freezes in debug and is
+   // transperent in release.)
+   return wxPlatformInfo::Get().GetOperatingSystemId() & wxOS_WINDOWS;
+}
+
+int GetActualCompressionLineWidth()
+{
+   using namespace DynamicRangeProcessorPanel;
+   return targetCompressionLineWidth + (MayUsePenGradients() ? 4 : 2);
 }
 } // namespace
 
@@ -73,12 +80,27 @@ DynamicRangeProcessorHistoryPanel::DynamicRangeProcessorHistoryPanel(
                                                               // is resumed.
                                                               mTimer.Stop();
                                                         }) }
-    , mRealtimeResumeSubscription {
-       static_cast<RealtimeResumePublisher&>(instance).Subscribe([this](auto) {
-          if (mHistory)
-             mHistory->BeginNewSegment();
-       })
-    }
+    , mRealtimeResumeSubscription { static_cast<RealtimeResumePublisher&>(
+                                       instance)
+                                       .Subscribe([this](auto) {
+                                          if (mHistory)
+                                             mHistory->BeginNewSegment();
+                                       }) }
+    , mPlaybackEventSubscription { AudioIO::Get()->Subscribe(
+         [this](const AudioIOEvent& evt) {
+            if (evt.type != AudioIOEvent::PAUSE)
+               return;
+            if (evt.on)
+            {
+               mTimer.Stop();
+               mClock.Pause();
+            }
+            else
+            {
+               mClock.Resume();
+               mTimer.Start(timerPeriodMs);
+            }
+         }) }
 {
    if (const auto& sampleRate = instance.GetSampleRate();
        sampleRate.has_value())
@@ -88,7 +110,7 @@ DynamicRangeProcessorHistoryPanel::DynamicRangeProcessorHistoryPanel(
 
    SetDoubleBuffered(true);
    mTimer.SetOwner(this, timerId);
-   SetSize({ minWidth, minHeight });
+   SetSize({ minWidth, DynamicRangeProcessorPanel::graphMinHeight });
 }
 
 namespace
@@ -142,10 +164,13 @@ void InsertCrossings(
          // x1 = x0 + (x2 - x0) * (y0_b - y0_a) / ((a_n - y0_a) - (b_n - y0_b))
          // clang-format on
          const auto x1 =
-            x0 + (x2 - x0) * (y0_a - y0_b) / (y2_b - y0_b + y0_a - y2_a);
+            x0 + (x2 - x0) * (y0_a - y0_b) / (y2_b - y2_a + y0_a - y0_b);
          const auto y = y0_a + (x1 - x0) / (x2 - x0) * (y2_a - y0_a);
-         it = A.emplace(it, x1, y)++;
-         jt = B.emplace(jt, x1, y)++;
+         if (std::isfinite(x1) && std::isfinite(y))
+         {
+            it = A.emplace(it, x1, y)++;
+            jt = B.emplace(jt, x1, y)++;
+         };
       }
       x0 = x2;
       y0_a = y2_a;
@@ -160,14 +185,13 @@ void InsertCrossings(
  * Fills the area between the lines and the bottom of the panel with the given
  * color.
  */
-template <typename Brush>
 void FillUpTo(
-   std::vector<wxPoint2DDouble> lines, const Brush& brush,
-   wxGraphicsContext& gc, const wxSize& size)
+   std::vector<wxPoint2DDouble> lines, const wxColor& color,
+   wxGraphicsContext& gc, const wxRect& rect)
 {
-   const auto height = size.GetHeight();
-   const auto left = std::max<double>(0., lines.front().m_x);
-   const auto right = std::min<double>(size.GetWidth(), lines.back().m_x);
+   const auto height = rect.GetHeight();
+   const auto left = std::max<double>(rect.GetX(), lines.front().m_x);
+   const auto right = std::min<double>(rect.GetWidth(), lines.back().m_x);
    auto area = gc.CreatePath();
    area.MoveToPoint(right, height);
    area.AddLineToPoint(left, height);
@@ -175,50 +199,20 @@ void FillUpTo(
       area.AddLineToPoint(p);
    });
    area.CloseSubpath();
-   gc.SetBrush(brush);
+   gc.SetBrush(color);
    gc.FillPath(area);
-}
-
-/*!
- * Fills the above `base` and below `line` with the given color.
- * @pre `base.size() == line.size()`
- */
-void FillExcess(
-   const std::vector<wxPoint2DDouble>& line, std::vector<wxPoint2DDouble> base,
-   const wxColor& color, wxPaintDC& dc)
-{
-   const auto gc = DynamicRangeProcessorPanel::MakeGraphicsContext(dc);
-   // transform `base` in-place to the lower of the two lines.
-   auto& lower = base;
-   std::transform(
-      line.begin(), line.end(), base.begin(), lower.begin(),
-      [](const auto& f, const auto& t) {
-         return wxPoint2DDouble { f.m_x, std::max(f.m_y, t.m_y) };
-      });
-   wxGraphicsPath area = gc->CreatePath();
-   area.MoveToPoint(lower.front());
-   std::for_each(lower.begin(), lower.end(), [&area](const auto& p) {
-      area.AddLineToPoint(p);
-   });
-   std::for_each(line.rbegin(), line.rend(), [&area](const auto& p) {
-      area.AddLineToPoint(p);
-   });
-   area.CloseSubpath();
-
-   gc->SetBrush(wxBrush { color });
-   gc->FillPath(area);
 }
 
 void DrawLegend(size_t height, wxPaintDC& dc, wxGraphicsContext& gc)
 {
    using namespace DynamicRangeProcessorPanel;
 
-   constexpr auto legendWidth = 10;
-   constexpr auto legendHeight = 10;
-   constexpr auto legendSpacing = 5;
+   constexpr auto legendWidth = 16;
+   constexpr auto legendHeight = 16;
+   constexpr auto legendSpacing = 8;
    constexpr auto legendX = 5;
    const auto legendY = height - 5 - legendHeight;
-   const auto legendTextX = legendX + legendWidth + legendSpacing;
+   const auto legendTextX = legendX + legendWidth + 5;
    const auto legendTextHeight = dc.GetTextExtent("X").GetHeight();
    const auto legendTextYOffset = (legendHeight - legendTextHeight) / 2;
    const auto legendTextY = legendY + legendTextYOffset;
@@ -232,27 +226,27 @@ void DrawLegend(size_t height, wxPaintDC& dc, wxGraphicsContext& gc)
    std::vector<LegendInfo> legends = {
       { inputColor, XO("Input") },
       { outputColor, XO("Output") },
-      /* i18n-hint: when smoothing leads the output level to be momentarily
-       * over the target */
-      { attackColor, XO("Overshoot") },
-      /* i18n-hint: when smoothing leads the output level to be momentarily
-       * under the target */
-      { releaseColor, XO("Undershoot") }
    };
 
    int legendTextXOffset = 0;
-   gc.SetPen(lineColor);
    dc.SetTextForeground(*wxBLACK);
    dc.SetFont(
-      { 8, wxFONTFAMILY_DEFAULT, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_NORMAL });
+      { 10, wxFONTFAMILY_DEFAULT, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_NORMAL });
    for (const auto& legend : legends)
    {
       // First fill with background color so that transparent foreground colors
       // yield the same result as on the graph.
+      gc.SetPen(*wxTRANSPARENT_PEN);
       gc.SetBrush(backgroundColor);
       gc.DrawRectangle(
          legendX + legendTextXOffset, legendY, legendWidth, legendHeight);
-      gc.SetBrush(legend.color);
+
+      gc.SetBrush(wxColor { legend.color.GetRGB() });
+      gc.DrawRectangle(
+         legendX + legendTextXOffset, legendY, legendWidth, legendHeight);
+
+      gc.SetPen(lineColor);
+      gc.SetBrush(*wxTRANSPARENT_BRUSH);
       gc.DrawRectangle(
          legendX + legendTextXOffset, legendY, legendWidth, legendHeight);
 
@@ -261,23 +255,50 @@ void DrawLegend(size_t height, wxPaintDC& dc, wxGraphicsContext& gc)
          legendTextY);
       const auto legendTextWidth =
          dc.GetTextExtent(legend.text.Translation()).GetWidth();
-      legendTextXOffset +=
-         legendWidth + legendSpacing + legendTextWidth + legendSpacing;
+      legendTextXOffset += legendWidth + 5 + legendTextWidth + legendSpacing;
    }
 
-   // Add a legend entry for the compression line:
-   gc.SetPen(lineColor);
-   const auto compressionLineX = legendX + legendTextXOffset + legendSpacing;
-   const auto compressionLineY = legendY + legendHeight / 2;
-   gc.StrokeLine(
-      compressionLineX, compressionLineY, compressionLineX + legendWidth,
-      compressionLineY);
-   const auto compressionText = XO("Compression");
-   const auto compressionTextWidth =
-      dc.GetTextExtent(compressionText.Translation()).GetWidth();
+   const auto lineY = legendY + legendHeight / 2.;
+   constexpr auto lineWidth = 24;
+
+   // Actual compression
+   const auto actualX = legendX + legendTextXOffset + legendSpacing;
+   const std::array<wxPoint2DDouble, 2> actualLine {
+      wxPoint2DDouble(actualX, lineY),
+      wxPoint2DDouble(actualX + lineWidth, lineY)
+   };
+
+   gc.SetPen({ actualCompressionColor, GetActualCompressionLineWidth() });
+   gc.DrawLines(2, actualLine.data());
+
+   if (MayUsePenGradients())
+   {
+      wxGraphicsPenInfo penInfo;
+      wxGraphicsGradientStops stops { actualCompressionColor,
+                                      actualCompressionColor };
+      stops.Add(attackColor.GetRGB(), 1 / 4.);
+      stops.Add(actualCompressionColor, 2 / 4.);
+      stops.Add(releaseColor.GetRGB(), 3 / 4.);
+      penInfo.LinearGradient(actualX, 0, actualX + lineWidth, 0, stops)
+         .Width(targetCompressionLineWidth);
+      gc.SetPen(gc.CreatePen(penInfo));
+   }
+   else
+      gc.SetPen(actualCompressionColor);
+
+   gc.DrawLines(2, actualLine.data());
+   const auto actualText = XO("Actual Compression");
+   const auto actualTextX = actualX + lineWidth + legendSpacing;
+   dc.DrawText(actualText.Translation(), actualTextX, legendTextY);
+
+   // Target compression
+   gc.SetPen({ targetCompressionColor, targetCompressionLineWidth });
+   const auto targetX =
+      actualTextX + dc.GetTextExtent(actualText.Translation()).GetWidth() + 10;
+   gc.StrokeLine(targetX, lineY, targetX + lineWidth, lineY);
+   const auto compressionText = XO("Target Compression");
    dc.DrawText(
-      compressionText.Translation(), compressionLineX + legendWidth + 5,
-      legendTextY);
+      compressionText.Translation(), targetX + lineWidth + 5, legendTextY);
 }
 } // namespace
 
@@ -293,15 +314,15 @@ void DynamicRangeProcessorHistoryPanel::ShowOutput(bool show)
    Refresh(false);
 }
 
-void DynamicRangeProcessorHistoryPanel::ShowOvershoot(bool show)
+void DynamicRangeProcessorHistoryPanel::ShowActual(bool show)
 {
-   mShowOvershoot = show;
+   mShowActual = show;
    Refresh(false);
 }
 
-void DynamicRangeProcessorHistoryPanel::ShowUndershoot(bool show)
+void DynamicRangeProcessorHistoryPanel::ShowTarget(bool show)
 {
-   mShowUndershoot = show;
+   mShowTarget = show;
    Refresh(false);
 }
 
@@ -312,19 +333,27 @@ void DynamicRangeProcessorHistoryPanel::OnPaint(wxPaintEvent& evt)
    using namespace DynamicRangeProcessorPanel;
 
    const auto gc = MakeGraphicsContext(dc);
-   const auto width = GetSize().GetWidth();
-   const auto height = GetSize().GetHeight();
+   const auto rect = DynamicRangeProcessorPanel::GetPanelRect(*this);
+   const auto x = rect.GetX();
+   const auto y = rect.GetY();
+   const auto width = rect.GetWidth();
+   const auto height = rect.GetHeight();
 
-   gc->SetBrush(gc->CreateLinearGradientBrush(
-      0, 0, 0, height, backgroundColor, *wxWHITE));
+   gc->SetBrush(GetGraphBackgroundBrush(*gc, height));
    gc->SetPen(wxTransparentColor);
-   gc->DrawRectangle(0, 0, width - 1, height - 1);
+   gc->DrawRectangle(x, y, width, height);
 
    Finally Do { [&] {
-      DrawLegend(height, dc, *gc);
+      // The legend is causing problems color-wise, and in the end it may not be
+      // so useful since the different elements of the graph can be toggled.
+      // Keep it up our sleeve for now, though. (Anyone still sees this in the
+      // not-so-near future, feel free to clean up.)
+      constexpr auto drawLegend = false;
+      if (drawLegend)
+         DrawLegend(height, dc, *gc);
       gc->SetBrush(*wxTRANSPARENT_BRUSH);
       gc->SetPen(lineColor);
-      gc->DrawRectangle(0, 0, width - 1, height - 1);
+      gc->DrawRectangle(x, y, width, height);
    } };
 
    if (!mHistory || !mSync)
@@ -350,7 +379,7 @@ void DynamicRangeProcessorHistoryPanel::OnPaint(wxPaintEvent& evt)
    const auto& segments = mHistory->GetSegments();
    const auto elapsedTimeSinceFirstPacket =
       std::chrono::duration<float>(mSync->now - mSync->start).count();
-   const auto rangeDb = GetDbRange(height);
+   const auto rangeDb = DynamicRangeProcessorPanel::GetGraphDbRange(height);
    const auto dbPerPixel = rangeDb / height;
 
    for (const auto& segment : segments)
@@ -400,48 +429,73 @@ void DynamicRangeProcessorHistoryPanel::OnPaint(wxPaintEvent& evt)
          mOutput.emplace_back(x, -packet.output / dbPerPixel);
       });
 
+      if (mShowInput)
+         FillUpTo(mInput, inputColor, *gc, rect);
+
       if (mShowOutput)
       {
-         // Paint output first with opaque color.
-         constexpr auto w = .4;
-         // Circle color.
-         const wxColor cCol = GetColorMix(backgroundColor, outputColor, w);
-         const auto xo = width * 0.9; // "o" for "origin"
-         const auto yo = height * 0.1;
-         const auto xf = width * 0.5; // "f" for "focus"
-         const auto yf = height * 0.2;
-         const auto radius = width;
-         const auto brush = gc->CreateRadialGradientBrush(
-            xo, yo, xf, yf, radius, outputColor, cCol);
-         FillUpTo(mOutput, brush, *gc, GetSize());
+         FillUpTo(mOutput, outputColor, *gc, rect);
+         const auto outputGc = MakeGraphicsContext(dc);
+         outputGc->SetPen({ wxColor { outputColor.GetRGB() }, 2 });
+         outputGc->DrawLines(mOutput.size(), mOutput.data());
       }
 
-      if (mShowInput)
-         FillUpTo(mInput, inputColor, *gc, GetSize());
-
-      if (mShowOvershoot || mShowUndershoot)
+      if (mShowActual)
       {
-         // We have to paint the difference between these two lines, and in
-         // different colors depending on which is on top. To fill the correct
-         // polygons, we have to add points where the lines intersect.
-         InsertCrossings(mActual, mTarget);
-         if (mShowOvershoot)
-            FillExcess(mActual, mTarget, attackColor, dc);
-         if (mShowUndershoot)
-            FillExcess(mTarget, mActual, releaseColor, dc);
+         // First draw a thick line, and then the thinner line in its center
+         // with colors indicating overshoot and undershoot.
+         const auto actualGc = MakeGraphicsContext(dc);
+
+         actualGc->SetPen(
+            wxPen { actualCompressionColor, GetActualCompressionLineWidth() });
+         actualGc->DrawLines(mActual.size(), mActual.data());
+         if (MayUsePenGradients())
+         {
+            // So that we can converge to `actualCompressionColor` at the
+            // crossings of actual and target compression.
+            InsertCrossings(mTarget, mActual);
+
+            wxGraphicsGradientStops stops;
+            const auto xLeft = mActual.front().m_x;
+            const auto xRight = mActual.back().m_x;
+            const auto span = xRight - xLeft;
+            for (auto i = 0; i < mActual.size(); ++i)
+            {
+               const auto diff = mTarget[i].m_y - mActual[i].m_y;
+               const auto actualIsBelow = diff < 0;
+               const auto w = std::min(1.0, std::abs(diff) * dbPerPixel / 6);
+               const auto color = GetColorMix(
+                                     actualIsBelow ? releaseColor : attackColor,
+                                     actualCompressionColor, w)
+                                     .GetRGB();
+               stops.Add(color, (mActual[i].m_x - xLeft) / span);
+            }
+            wxGraphicsPenInfo penInfo;
+            penInfo
+               .LinearGradient(
+                  mActual.front().m_x, 0, mActual.back().m_x, 0, stops)
+               .Width(targetCompressionLineWidth);
+
+            actualGc->SetPen(actualGc->CreatePen(penInfo));
+            actualGc->DrawLines(mActual.size(), mActual.data());
+         }
       }
 
-      // Actual compression line
-      const auto gc2 = MakeGraphicsContext(dc);
-      gc2->SetPen(lineColor);
-      gc2->DrawLines(mActual.size(), mActual.data());
+      if (mShowTarget)
+      {
+         const auto targetGc = MakeGraphicsContext(dc);
+         targetGc->SetPen(
+            wxPen { targetCompressionColor, targetCompressionLineWidth });
+         targetGc->DrawLines(mTarget.size(), mTarget.data());
+      }
    }
 }
 
 void DynamicRangeProcessorHistoryPanel::OnSize(wxSizeEvent& evt)
 {
    Refresh(false);
-   mOnDbRangeChanged(GetDbRange(GetSize().GetHeight()));
+   mOnDbRangeChanged(
+      DynamicRangeProcessorPanel::GetGraphDbRange(GetSize().GetHeight()));
 }
 
 void DynamicRangeProcessorHistoryPanel::OnTimer(wxTimerEvent& evt)
@@ -457,7 +511,7 @@ void DynamicRangeProcessorHistoryPanel::OnTimer(wxTimerEvent& evt)
 
    // Do now get `std::chrono::steady_clock::now()` in the `OnPaint` event,
    // because this can be triggered even when playback is paused.
-   const auto now = std::chrono::steady_clock::now();
+   const auto now = mClock.GetNow();
    if (!mSync)
       // At the time of writing, the realtime playback doesn't account for
       // varying latencies. When it does, the synchronization will have to be
@@ -489,9 +543,9 @@ void DynamicRangeProcessorHistoryPanel::InitializeForPlayback(
    mPacketBuffer.reserve(maxQueueSize);
    // Although `mOutputQueue` is a shared_ptr, we construct a unique_ptr and
    // invoke the shared_ptr ctor overload that takes a unique_ptr.
-   // This way, we avoid the `error: aligned deallocation function of type 'void
-   // (void *, std::align_val_t) noexcept' is only available on macOS 10.13 or
-   // newer` compilation error.
+   // This way, we avoid the `error: aligned deallocation function of type
+   // 'void (void *, std::align_val_t) noexcept' is only available on
+   // macOS 10.13 or newer` compilation error.
    mOutputQueue =
       std::make_unique<DynamicRangeProcessorOutputPacketQueue>(maxQueueSize);
    instance.SetOutputQueue(mOutputQueue);

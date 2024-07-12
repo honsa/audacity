@@ -10,10 +10,12 @@
 **********************************************************************/
 #pragma once
 
+#include "DynamicRangeProcessorClock.h"
 #include "DynamicRangeProcessorHistory.h"
 #include "Observer.h"
 #include "wxPanelWrapper.h"
 #include <chrono>
+#include <functional>
 #include <optional>
 #include <wx/geometry.h>
 #include <wx/timer.h>
@@ -26,8 +28,6 @@ class DynamicRangeProcessorHistoryPanel final : public wxPanelWrapper
 {
 public:
    static constexpr auto minWidth = 600;
-   static constexpr auto minHeight = 270;
-   static constexpr auto minRangeDb = 20.f;
 
    DynamicRangeProcessorHistoryPanel(
       wxWindow* parent, wxWindowID winid, CompressorInstance& instance,
@@ -43,8 +43,8 @@ public:
    // For now no-opt functions, but there are plans to add visibility toggles.
    void ShowInput(bool show);
    void ShowOutput(bool show);
-   void ShowOvershoot(bool show);
-   void ShowUndershoot(bool show);
+   void ShowActual(bool show);
+   void ShowTarget(bool show);
 
    DECLARE_EVENT_TABLE();
 
@@ -62,9 +62,11 @@ private:
    std::shared_ptr<DynamicRangeProcessorOutputPacketQueue> mOutputQueue;
    std::vector<DynamicRangeProcessorOutputPacket> mPacketBuffer;
    std::optional<DynamicRangeProcessorHistory> mHistory;
+   DynamicRangeProcessorClock mClock;
    const std::function<void(float)> mOnDbRangeChanged;
    const Observer::Subscription mInitializeProcessingSettingsSubscription;
    const Observer::Subscription mRealtimeResumeSubscription;
+   const Observer::Subscription mPlaybackEventSubscription;
    wxTimer mTimer;
    std::optional<ClockSynchronization> mSync;
    std::vector<double> mX;
@@ -75,6 +77,6 @@ private:
    bool mPlaybackAboutToStart = false;
    bool mShowInput = true;
    bool mShowOutput = true;
-   bool mShowOvershoot = true;
-   bool mShowUndershoot = true;
+   bool mShowActual = true;
+   bool mShowTarget = true;
 };

@@ -1,6 +1,6 @@
 #include "audacityproject.h"
 
-#include "au3wrap/au3project.h"
+#include "au3wrap/iau3project.h"
 #include "iprojectautosaver.h"
 #include "projecterrors.h"
 #include "global/io/ioretcodes.h"
@@ -62,7 +62,7 @@ muse::Ret Audacity4Project::doLoad(const io::path_t& path, bool forceMode, const
     UNUSED(forceMode);
     UNUSED(format);
 
-    m_au3Project = au3::Au3Project::create();
+    m_au3Project = au3ProjectCreator()->create();
     bool isLoaded = m_au3Project->load(path);
     if (!isLoaded) {
         LOGE() << "Failed load:" << path;
@@ -84,7 +84,21 @@ muse::Ret Audacity4Project::doLoad(const io::path_t& path, bool forceMode, const
 
 void Audacity4Project::close()
 {
+    m_aboutCloseBegin.notify();
+
     m_au3Project->close();
+
+    m_aboutCloseEnd.notify();
+}
+
+muse::async::Notification Audacity4Project::aboutCloseBegin() const
+{
+    return m_aboutCloseBegin;
+}
+
+muse::async::Notification Audacity4Project::aboutCloseEnd() const
+{
+    return m_aboutCloseEnd;
 }
 
 QString Audacity4Project::displayName() const
@@ -237,7 +251,7 @@ Ret Audacity4Project::doSave(const muse::io::path_t& savePath, bool generateBack
         return make_ret(io::Err::FSWriteError);
     }
 
-    auto ret = m_au3Project->save(savePath, false);
+    auto ret = m_au3Project->save(savePath);
     if (ret) {
         return make_ret(Ret::Code::Ok);
     }

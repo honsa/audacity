@@ -24,10 +24,7 @@ declare_module(au3wrap)
 set(MODULE_SRC
     ${CMAKE_CURRENT_LIST_DIR}/au3wrapmodule.cpp
     ${CMAKE_CURRENT_LIST_DIR}/au3wrapmodule.h
-
-    ${CMAKE_CURRENT_LIST_DIR}/wxtypes_convert.h
-    ${CMAKE_CURRENT_LIST_DIR}/au3project.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/au3project.h
+    ${CMAKE_CURRENT_LIST_DIR}/iau3project.h
     ${CMAKE_CURRENT_LIST_DIR}/iau3wavepainter.h
     ${CMAKE_CURRENT_LIST_DIR}/iau3record.h
     ${CMAKE_CURRENT_LIST_DIR}/iau3audioinput.h
@@ -35,12 +32,15 @@ set(MODULE_SRC
     ${CMAKE_CURRENT_LIST_DIR}/mocks/au3settingsmock.cpp
     ${CMAKE_CURRENT_LIST_DIR}/mocks/au3settingsmock.h
 
+    ${CMAKE_CURRENT_LIST_DIR}/internal/wxtypes_convert.h
     ${CMAKE_CURRENT_LIST_DIR}/internal/wxlogwrap.cpp
     ${CMAKE_CURRENT_LIST_DIR}/internal/wxlogwrap.h
     ${CMAKE_CURRENT_LIST_DIR}/internal/domconverter.cpp
     ${CMAKE_CURRENT_LIST_DIR}/internal/domconverter.h
     ${CMAKE_CURRENT_LIST_DIR}/internal/domaccessor.cpp
     ${CMAKE_CURRENT_LIST_DIR}/internal/domaccessor.h
+    ${CMAKE_CURRENT_LIST_DIR}/internal/au3project.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/internal/au3project.h
     ${CMAKE_CURRENT_LIST_DIR}/internal/processinginteraction.cpp
     ${CMAKE_CURRENT_LIST_DIR}/internal/processinginteraction.h
     ${CMAKE_CURRENT_LIST_DIR}/internal/au3wavepainter.cpp
@@ -59,8 +59,8 @@ set(MODULE_SRC
     ${CMAKE_CURRENT_LIST_DIR}/internal/au3audioinput.h
     ${CMAKE_CURRENT_LIST_DIR}/internal/au3audioinoutmeter.cpp
     ${CMAKE_CURRENT_LIST_DIR}/internal/au3audioinoutmeter.h
-    ${CMAKE_CURRENT_LIST_DIR}/internal/au3audiodevicesmanager.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/internal/au3audiodevicesmanager.h
+    ${CMAKE_CURRENT_LIST_DIR}/internal/au3audiodevicesprovider.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/internal/au3audiodevicesprovider.h
     ${CMAKE_CURRENT_LIST_DIR}/internal/au3selectioncontroller.cpp
     ${CMAKE_CURRENT_LIST_DIR}/internal/au3selectioncontroller.h
     )
@@ -516,6 +516,8 @@ if (AU3_ADD_AS_SRC)
 
     ${AU3_LIBRARIES}/lib-numeric-formats/ProjectTimeSignature.cpp
     ${AU3_LIBRARIES}/lib-numeric-formats/ProjectTimeSignature.h
+    ${AU3_LIBRARIES}/lib-numeric-formats/Beats.cpp
+    ${AU3_LIBRARIES}/lib-numeric-formats/Beats.h
 
     # Requires wxApp, so we won't use it
     # ${AU3_LIBRARIES}/lib-wx-init/SettingsWX.cpp

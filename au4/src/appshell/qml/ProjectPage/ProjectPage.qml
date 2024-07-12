@@ -123,12 +123,6 @@ DockPage {
             ProjectToolBar {
                 navigationPanel.section: root.topToolKeyNavSec
                 navigationPanel.order: 2
-
-                onActiveFocusRequested: {
-                    if (navigationPanel.active) {
-                        projectToolBar.forceActiveFocus()
-                    }
-                }
             }
         }
     ]
@@ -188,5 +182,15 @@ DockPage {
 
     central: TracksClipsView {
         id: clipsView
+    }
+
+    statusBar: DockStatusBar {
+        objectName: pageModel.statusBarName()
+
+        height: 40
+        minimumHeight: height
+        maximumHeight: height
+
+        ProjectStatusBar {}
     }
 }

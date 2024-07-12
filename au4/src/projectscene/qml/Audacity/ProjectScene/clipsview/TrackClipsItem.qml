@@ -33,7 +33,12 @@ Item {
 
     Component.onCompleted: {
         trackViewState.init()
-        clipsModel.load()
+        clipsModel.init()
+    }
+
+    function changeClipTitle(index, newTitle) {
+        clipsModel.changeClipTitle(index, newTitle)
+        clipsModel.resetSelectedClip()
     }
 
     Item {
@@ -58,6 +63,9 @@ Item {
                 clipSelected: clipsModel.selectedClipIdx === model.index
                 collapsed: trackViewState.isTrackCollapsed
 
+                dragMaximumX: model.clipMoveMaximumX + borderWidth
+                dragMinimumX: model.clipMoveMinimumX - borderWidth
+
                 onPositionChanged: function(x) {
                     model.clipLeft = x
                 }
@@ -71,8 +79,7 @@ Item {
                 }
 
                 onTitleEditAccepted: function(newTitle) {
-                    model.clipTitle = newTitle
-                    clipsModel.resetSelectedClip()
+                    root.changeClipTitle(model.index, newTitle)
                 }
 
                 onTitleEditCanceled: {
@@ -118,5 +125,9 @@ Item {
         }
     }
 
-    SeparatorLine { id: sep; anchors.bottom: parent.bottom }
+    SeparatorLine {
+        id: sep
+        color: "#FFFFFF"
+        opacity: 0.1
+        anchors.bottom: parent.bottom }
 }

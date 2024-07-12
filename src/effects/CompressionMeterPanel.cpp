@@ -9,6 +9,7 @@
 
 **********************************************************************/
 #include "CompressionMeterPanel.h"
+#include "AudioIO.h"
 #include "CompressorInstance.h"
 #include "DynamicRangeProcessorPanelCommon.h"
 #include <algorithm>
@@ -21,20 +22,12 @@ namespace
 using namespace DynamicRangeProcessorPanel;
 
 constexpr auto timerId = 7000;
-constexpr auto decayPerSecondDb = 10.f;
-constexpr auto decayPerTickDb =
-   decayPerSecondDb * CompressionMeterPanel::timerPeriodMs / 1000.f;
 // An overestimate: 44.1kHz and 512 samples per buffer, in frames per second,
 // would be 86.13.
 constexpr auto audioFramePerSec = 200;
-constexpr auto ticksPerSec = 1000 / CompressionMeterPanel::timerPeriodMs;
+constexpr auto ticksPerSec = 1000 / compressorMeterUpdatePeriodMs;
 // This will be set as max size for the lock-free queue.
 constexpr auto audioFramesPerTick = audioFramePerSec / ticksPerSec;
-
-constexpr auto w = 0.4;
-const wxColor fullLevelColor { 255, 219, 0 };
-const wxColor levelMinColor = GetColorMix(backgroundColor, fullLevelColor, w);
-const wxColor levelMaxColor = fullLevelColor.ChangeLightness(70);
 } // namespace
 
 BEGIN_EVENT_TABLE(CompressionMeterPanel, wxPanelWrapper)
@@ -43,19 +36,38 @@ EVT_TIMER(timerId, CompressionMeterPanel::OnTimer)
 END_EVENT_TABLE()
 
 CompressionMeterPanel::CompressionMeterPanel(
-   wxWindow* parent, CompressorInstance& instance)
-    : wxPanelWrapper { parent, wxID_ANY }
+   wxWindow* parent, int id, CompressorInstance& instance, float dbRange,
+   std::function<void()> onClipped)
+    : wxPanelWrapper { parent, id }
     , mMeterValuesQueue { std::make_unique<
          DynamicRangeProcessorMeterValuesQueue>(audioFramesPerTick) }
-    , mPlaybackStartStopSubscription {
-       static_cast<InitializeProcessingSettingsPublisher&>(instance).Subscribe(
-          [&](const std::optional<InitializeProcessingSettings>& evt) {
-             if (evt)
-                Reset();
-             else
-                mStopWhenZero = true;
-          })
-    }
+    , mPlaybackStartStopSubscription { static_cast<
+                                          InitializeProcessingSettingsPublisher&>(
+                                          instance)
+                                          .Subscribe(
+                                             [&](const std::optional<
+                                                 InitializeProcessingSettings>&
+                                                    evt) {
+                                                if (evt)
+                                                   Reset();
+                                                else
+                                                   mStopWhenZero = true;
+                                             }) }
+    , mPlaybackPausedSubscription { AudioIO::Get()->Subscribe(
+         [this](const AudioIOEvent& evt) {
+            if (evt.type != AudioIOEvent::PAUSE)
+               return;
+            if (evt.on)
+               mTimer.Stop();
+            else
+               mTimer.Start(compressorMeterUpdatePeriodMs);
+         }) }
+    , mOnClipped { onClipped }
+    , mDbBottomEdgeValue { -dbRange }
+    , mCompressionMeter { MeterValueProvider::Create(
+         MeterValueProvider::Direction::Downwards) }
+    , mOutputMeter { MeterValueProvider::Create(
+         MeterValueProvider::Direction::Upwards) }
 {
    if (instance.GetSampleRate().has_value())
       // Playback is ongoing, and so the `InitializeProcessingSettings` event
@@ -66,13 +78,26 @@ CompressionMeterPanel::CompressionMeterPanel(
    SetDoubleBuffered(true);
 }
 
+void CompressionMeterPanel::SetDbRange(float dbRange)
+{
+   mDbBottomEdgeValue = -dbRange;
+   Refresh(true);
+}
+
 void CompressionMeterPanel::Reset()
 {
-   mCompressionColMin = 0;
-   mOutputColMax = outputColBottomValue;
-   mRingBuffer.fill({});
+   mCompressionMeter =
+      MeterValueProvider::Create(MeterValueProvider::Direction::Downwards);
+   mOutputMeter =
+      MeterValueProvider::Create(MeterValueProvider::Direction::Upwards);
    mStopWhenZero = false;
-   mTimer.Start(timerPeriodMs);
+   mClipped = false;
+   mTimer.Start(compressorMeterUpdatePeriodMs);
+}
+
+void CompressionMeterPanel::ResetClipped()
+{
+   mClipped = false;
 }
 
 void CompressionMeterPanel::OnPaint(wxPaintEvent& evt)
@@ -81,26 +106,41 @@ void CompressionMeterPanel::OnPaint(wxPaintEvent& evt)
 
    wxPaintDC dc(this);
 
-   auto left = GetClientRect();
-   left.SetWidth(left.GetWidth() / 2);
-   PaintRectangle(
-      dc, left, mSmoothedValues.compressionGainDb, mCompressionColMin, true);
-   PaintLabel(dc, left, XO("compression"));
-
-   auto right = left;
-   right.Offset(left.GetWidth(), 0);
-   PaintRectangle(dc, right, mSmoothedValues.outputDb, mOutputColMax, false);
-   PaintLabel(dc, right, XO("output"));
-
+   const auto rect = DynamicRangeProcessorPanel::GetPanelRect(*this);
    const auto gc = MakeGraphicsContext(dc);
+   const auto left = rect.GetLeft();
+   const auto top = rect.GetTop();
+   const auto width = rect.GetWidth();
+   const auto height = rect.GetHeight();
+
+   gc->SetPen(*wxTRANSPARENT_PEN);
+   gc->SetBrush(GetGraphBackgroundBrush(*gc, height));
+   gc->DrawRectangle(left, top, width, height);
+
+   auto leftRect = rect;
+   leftRect.SetWidth(rect.GetWidth() / 2 - 2);
+   leftRect.Offset(1, 0);
+   PaintMeter(dc, actualCompressionColor, leftRect, *mCompressionMeter);
+
+   auto rightRect = leftRect;
+   rightRect.Offset(leftRect.GetWidth(), 0);
+   PaintMeter(dc, outputColor, rightRect, *mOutputMeter);
+
    gc->SetPen(lineColor);
    gc->SetBrush(wxNullBrush);
-   gc->DrawRectangle(0, 0, GetSize().GetWidth(), GetSize().GetHeight());
+   gc->DrawRectangle(left, top, width, height);
 }
 
-void CompressionMeterPanel::PaintRectangle(
-   wxPaintDC& dc, const wxRect& rect, double dB, double maxDb, bool upwards)
+void CompressionMeterPanel::PaintMeter(
+   wxPaintDC& dc, const wxColor& color, const wxRect& rect,
+   const MeterValueProvider& provider)
 {
+   const auto dB = provider.GetCurrentMax();
+   const auto maxDb = provider.GetGlobalMax();
+   const auto fiveSecMaxDb = provider.GetFiveSecMax();
+   const auto downwards =
+      provider.GetDirection() == MeterValueProvider::Direction::Downwards;
+
    const auto gc = MakeGraphicsContext(dc);
 
    const double left = rect.GetLeft();
@@ -108,55 +148,38 @@ void CompressionMeterPanel::PaintRectangle(
    const double width = rect.GetWidth();
    const double height = rect.GetHeight();
 
-   const double dbFrac =
-      std::clamp<double>(-dB / compressorMeterRangeDb, 0., 1.);
-   const double dbY = height * dbFrac;
-   const double maxDbY = -maxDb / compressorMeterRangeDb * height;
-   const double maxDbFrac = maxDbY / height;
+   constexpr auto lineWidth = 6.;
 
-   const auto levelTop = upwards ? top : dbY;
-   const auto backgroundTop = upwards ? dbY : top;
-   const auto levelHeight = upwards ? dbY : height - dbY;
-   const auto levelMinColorY = upwards ? 0 : height;
-   const auto fullLevelColorY = height - levelMinColorY;
-   const auto& bottomColor = upwards ? levelMaxColor : levelMinColor;
-   const auto& topColor = upwards ? levelMinColor : levelMaxColor;
+   const double dbFrac = std::clamp<double>(dB / mDbBottomEdgeValue, 0., 1.);
+   // So that the top of the cap is aligned with the dB value.
+   const auto yAdjust = lineWidth / 2 * (downwards ? -1 : 1);
+   const double dbY = height * dbFrac + yAdjust;
+   const double maxDbY = maxDb / mDbBottomEdgeValue * height + yAdjust;
+   const double fiveSecMaxDbY =
+      fiveSecMaxDb / mDbBottomEdgeValue * height + yAdjust;
 
-   gc->SetPen(wxNullPen);
-   gc->SetBrush(gc->CreateLinearGradientBrush(
-      0, levelMinColorY, 0, fullLevelColorY, levelMinColor, fullLevelColor));
-   gc->DrawRectangle(left, levelTop, width, levelHeight);
-   gc->SetBrush(backgroundColor);
-   gc->DrawRectangle(left, backgroundTop, width, height - levelHeight);
+   const auto levelTop = downwards ? top : dbY;
+   const auto levelHeight = downwards ? dbY : height - dbY;
+   const auto maxLevelTop = downwards ? levelHeight - top : maxDbY;
+   const auto maxLevelHeight = std::abs(maxDbY - dbY);
 
-   const auto levelLineColor = GetColorMix(bottomColor, topColor, dbFrac);
-   gc->SetPen(wxPen { levelLineColor, 1 });
-   gc->StrokeLine(left, dbY, left + width, dbY);
-   const auto levelMaxLineColor = GetColorMix(bottomColor, topColor, maxDbFrac);
-   gc->SetPen(wxPen { levelMaxLineColor, 1 });
-   gc->StrokeLine(left, maxDbY, left + width, maxDbY);
-}
-
-void CompressionMeterPanel::PaintLabel(
-   wxPaintDC& dc, const wxRect& rect, const TranslatableString& label)
-{
-   const auto left = rect.GetLeft();
-   const auto width = rect.GetWidth();
-   const auto height = rect.GetHeight();
-   dc.SetFont(
-      { 10, wxFONTFAMILY_DEFAULT, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_NORMAL });
-   dc.SetTextForeground({ 128, 128, 128 });
-   const auto text = label.Translation();
-   const auto t = dc.GetTextExtent(text);
-   const auto x = left + (width + t.GetHeight()) / 2;
-   const auto y = height - t.GetWidth() - 5;
-   dc.DrawRotatedText(text, x, y, 270);
+   const auto rectLeft = left + 3;
+   const auto rectWidth = width - 4;
+   const auto opaqueColor = wxColor { color.GetRGB() };
+   gc->SetBrush(GetColorMix(opaqueColor, wxTransparentColor, 0.8));
+   gc->DrawRectangle(rectLeft, levelTop, rectWidth, levelHeight);
+   gc->SetBrush(GetColorMix(opaqueColor, wxTransparentColor, 0.6));
+   gc->DrawRectangle(rectLeft, maxLevelTop, rectWidth, maxLevelHeight);
+   gc->SetBrush(opaqueColor);
+   gc->DrawRectangle(rectLeft, dbY - 2, rectWidth, lineWidth);
+   gc->DrawRectangle(rectLeft, maxDbY - 2, rectWidth, lineWidth);
+   gc->SetPen({ opaqueColor, static_cast<int>(lineWidth / 2) });
+   gc->StrokeLine(
+      left + rectWidth / 2, fiveSecMaxDbY, left + rectWidth, fiveSecMaxDbY);
 }
 
 void CompressionMeterPanel::OnTimer(wxTimerEvent& evt)
 {
-   const auto lastValues = mRingBuffer[mRingBufferIndex];
-
    // Take the max of all values newly pushed by the audio frames - make sure we
    // don't miss a peak.
    MeterValues values;
@@ -169,33 +192,21 @@ void CompressionMeterPanel::OnTimer(wxTimerEvent& evt)
       highestOutputGain = std::max(values.outputDb, highestOutputGain);
    }
 
-   mRingBuffer[mRingBufferIndex] = { lowestCompressionGain, highestOutputGain };
-   mRingBufferIndex = (mRingBufferIndex + 1) % ringBufferLength;
-
-   if (lastValues.compressionGainDb < mSmoothedValues.compressionGainDb)
+   const auto updateFiveSecondMax = !mStopWhenZero;
+   mCompressionMeter->Update(lowestCompressionGain, updateFiveSecondMax);
+   mOutputMeter->Update(highestOutputGain, updateFiveSecondMax);
+   const auto clipped = mOutputMeter->GetCurrentMax() > 0;
+   if (clipped && !mClipped)
    {
-      mSmoothedValues.compressionGainDb = lastValues.compressionGainDb;
-      mCompressionColMin =
-         std::min<double>(mCompressionColMin, lastValues.compressionGainDb);
+      mOnClipped();
+      mClipped = true;
    }
-   else
-      mSmoothedValues.compressionGainDb =
-         std::min(0.f, mSmoothedValues.compressionGainDb + decayPerTickDb);
-
-   if (lastValues.outputDb > mSmoothedValues.outputDb)
-   {
-      mSmoothedValues.outputDb = lastValues.outputDb;
-      mOutputColMax = std::max<double>(mOutputColMax, lastValues.outputDb);
-   }
-   else
-      mSmoothedValues.outputDb = std::min(
-         compressorMeterRangeDb, mSmoothedValues.outputDb - decayPerTickDb);
 
    Refresh(false);
 
    if (
-      mSmoothedValues.compressionGainDb >= 0 &&
-      mSmoothedValues.outputDb <= outputColBottomValue && mStopWhenZero)
+      mCompressionMeter->IsInvisible() && mOutputMeter->IsInvisible() &&
+      mStopWhenZero)
    {
       // Decay is complete. Until playback starts again, no need for
       // timer-triggered updates.

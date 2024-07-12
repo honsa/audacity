@@ -8,6 +8,7 @@
 #include "modularity/ioc.h"
 #include "context/iglobalcontext.h"
 #include "processing/iprocessinginteraction.h"
+#include "processing/iselectioncontroller.h"
 #include "actions/iactionsdispatcher.h"
 #include "actions/actionable.h"
 
@@ -27,6 +28,7 @@ class ClipsListModel : public QAbstractListModel, public muse::async::Asyncable,
 
     muse::Inject<context::IGlobalContext> globalContext;
     muse::Inject<processing::IProcessingInteraction> processingInteraction;
+    muse::Inject<processing::ISelectionController> selectionController;
     muse::Inject<muse::actions::IActionsDispatcher> dispatcher;
 
 public:
@@ -39,9 +41,12 @@ public:
     int selectedClipIdx() const;
     void setSelectedClipIdx(int newSelectedClipIdx);
 
-    Q_INVOKABLE void load();
+    Q_INVOKABLE void init();
+    Q_INVOKABLE void reload();
     Q_INVOKABLE void selectClip(int index);
     Q_INVOKABLE void resetSelectedClip();
+
+    Q_INVOKABLE bool changeClipTitle(int index, const QString& newTitle);
 
     int rowCount(const QModelIndex& parent) const override;
     QHash<int, QByteArray> roleNames() const override;
@@ -65,11 +70,16 @@ private:
         ClipTitleRole,
         ClipColorRole,
         ClipWidthRole,
-        ClipLeftRole
+        ClipLeftRole,
+        ClipMoveMaximumXRole,
+        ClipMoveMinimumXRole
     };
 
+    void update();
+
+    void positionViewAtClip(const processing::Clip& clip);
+
     bool changeClipStartTime(const QModelIndex& index, const QVariant& value);
-    bool changeClipTitle(const QModelIndex& index, const QVariant& value);
 
     void onSelectedClip(const processing::ClipKey& k);
 
@@ -77,7 +87,8 @@ private:
 
     TimelineContext* m_context = nullptr;
     processing::TrackId m_trackId = -1;
-    muse::async::NotifyList<au::processing::Clip> m_clipList;
+    muse::async::NotifyList<au::processing::Clip> m_allClipList;
+    std::vector<au::processing::Clip> m_clipList;
     int m_selectedClipIdx = -1;
 };
 }

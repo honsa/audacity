@@ -9,16 +9,18 @@
 #include "async/asyncable.h"
 
 #include "timeformat.h"
+#include "beatsmeasuresformat.h"
 #include "timelinecontext.h"
 
 class QPainter;
 
 namespace au::projectscene {
 struct TickInfo {
-    int x = 0;
+    double x = 0.0;
     QString tickLabel;
     TickType tickType = TickType::MINORMINOR;
     QLineF line;
+    double timeValue;
 };
 
 using Ticks = QVector<TickInfo>;
@@ -30,6 +32,7 @@ class TimelineRuler : public QQuickPaintedItem, public muse::async::Asyncable
     Q_PROPERTY(TimelineContext * context READ timelineContext WRITE setTimelineContext NOTIFY timelineContextChanged FINAL)
 
     muse::Inject<muse::ui::IUiConfiguration> uiconfiguration;
+    muse::Inject<IProjectSceneConfiguration> configuration;
 
 signals:
     void offsetChanged();
@@ -39,6 +42,10 @@ public:
     explicit TimelineRuler(QQuickItem* parent = nullptr);
     ~TimelineRuler() = default;
 
+    IntervalInfo intervalInfo();
+
+    void setFormatter(const TimelineRulerMode mode);
+
     void paint(QPainter* painter) override;
 
     TimelineContext* timelineContext() const;
@@ -46,14 +53,15 @@ public:
 
 signals:
     void timelineContextChanged();
+    void ticksChanged(Ticks ticks);
+    void formatterChanged();
 
 private:
-    void prepareTickData(Ticks& ticks, const TimeIntervalInfo& timeInterval, double w, double h);
+    Ticks prepareTickData(const IntervalInfo& timeInterval, double w, double h);
     void drawLabels(QPainter* painter, const Ticks& ticks, double w, double h);
     void drawTicks(QPainter* painter, const Ticks& ticks);
 
-    void onFrameTimeChanged();
-
     TimelineContext* m_context = nullptr;
+    std::unique_ptr<IRulerFormat> m_formatter;
 };
 }

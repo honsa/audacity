@@ -1,6 +1,7 @@
 #include "DynamicRangeProcessorEditor.h"
 #include "AllThemeResources.h"
 #include "BasicUI.h"
+#include "ClipIndicatorPanel.h"
 #include "CompressionMeterPanel.h"
 #include "CompressorProcessor.h"
 #include "DynamicRangeProcessorHistoryPanel.h"
@@ -18,6 +19,10 @@
 #include <wx/slider.h>
 #include <wx/textctrl.h>
 
+#if wxUSE_ACCESSIBILITY
+#   include "WindowAccessible.h"
+#endif
+
 namespace
 {
 using TFPanel = DynamicRangeProcessorTransferFunctionPanel;
@@ -27,8 +32,12 @@ constexpr auto historyPanelId = wxID_HIGHEST + 1;
 constexpr auto historyRulerPanelId = wxID_HIGHEST + 2;
 constexpr auto transferFunctionPanelId = wxID_HIGHEST + 3;
 constexpr auto checkboxId = wxID_HIGHEST + 4;
+constexpr auto compressionMeterRulerPanelId = wxID_HIGHEST + 5;
+constexpr auto compressionMeterPanelId = wxID_HIGHEST + 6;
+constexpr auto clipIndicatorId = wxID_HIGHEST + 7;
 constexpr auto rulerWidth = 30;
 constexpr auto borderSize = 5;
+constexpr auto compressionMeterPanelWidth = 30;
 
 float GetDbRange(float maxCompressionDb)
 {
@@ -103,17 +112,18 @@ auto SliderToTextValue(double value, const ExtendedCompressorParameter& setting)
    const auto scaled = value / setting.param->TextToSlider();
    return setting.attributes.exponentialSlider ?
              MapExponentially(
-                setting.param->Min(), setting.param->Max(), scaled) :
+                setting.param->SliderMin(), setting.param->SliderMax(),
+                scaled) :
              scaled;
 }
 
 auto TextToSliderValue(ExtendedCompressorParameter& setting)
 {
-   const auto unscaled =
-      setting.attributes.exponentialSlider ?
-         MapLogarithmically(
-            setting.param->Min(), setting.param->Max(), setting.value) :
-         setting.value;
+   const auto unscaled = setting.attributes.exponentialSlider ?
+                            MapLogarithmically(
+                               setting.param->SliderMin(),
+                               setting.param->SliderMax(), setting.value) :
+                            setting.value;
    return unscaled * setting.param->TextToSlider();
 }
 } // namespace
@@ -143,10 +153,19 @@ void DynamicRangeProcessorEditor::PopulateOrExchange(ShuttleGui& S)
    S.SetBorder(borderSize);
    S.AddSpace(0, borderSize);
 
-   if (const auto compressorSettings = GetCompressorSettings())
-      PopulateCompressorUpperHalf(S, *compressorSettings);
+   const auto compressorSettings = GetCompressorSettings();
+   if (compressorSettings)
+   {
+      S.StartMultiColumn(2, wxEXPAND);
+      {
+         S.SetStretchyCol(0);
+         AddSliderPanel(S);
+         AddCompressionCurvePanel(S, *compressorSettings);
+      }
+      S.EndMultiColumn();
+   }
    else
-      PopulateLimiterUpperHalf(S);
+      AddSliderPanel(S);
 
    if (!mIsRealtime)
       // Not a real-time effect editor, no need for a graph
@@ -159,73 +178,83 @@ void DynamicRangeProcessorEditor::PopulateOrExchange(ShuttleGui& S)
       GetDbRange(CompressorProcessor::GetMaxCompressionDb(settings)),
       historyRulerPanelId);
 
-   const auto histPanel = safenew HistPanel(
-      mUIParent, historyPanelId, mCompressorInstance, [this](float newDbRange) {
+   const auto onDbRangeChanged = [this](float newDbRange) {
+      for (const auto id :
+           { historyRulerPanelId, compressionMeterRulerPanelId })
          if (
             const auto panel = dynamic_cast<RulerPanel*>(
-               wxWindow::FindWindowById(historyRulerPanelId, mUIParent)))
+               wxWindow::FindWindowById(id, mUIParent)))
          {
             panel->ruler.SetRange(0., -newDbRange);
             panel->Refresh();
          }
-      });
+      if (
+         const auto compressionMeterPanel =
+            dynamic_cast<CompressionMeterPanel*>(
+               wxWindow::FindWindowById(compressionMeterPanelId, mUIParent)))
+         compressionMeterPanel->SetDbRange(newDbRange);
+   };
+
+   const auto histPanel = safenew HistPanel(
+      mUIParent, historyPanelId, mCompressorInstance, onDbRangeChanged);
    histPanel->ShowInput(settings.showInput);
    histPanel->ShowOutput(settings.showOutput);
-   histPanel->ShowOvershoot(settings.showOvershoot);
-   histPanel->ShowUndershoot(settings.showUndershoot);
+   histPanel->ShowActual(settings.showActual);
+   histPanel->ShowTarget(settings.showTarget);
 
-#define GET_REF(settingName)                                        \
-   GetCompressorSettings() ? GetCompressorSettings()->settingName : \
-                             GetLimiterSettings()->settingName
-
-   S.StartHorizontalLay(wxALIGN_LEFT, 0);
+   S.StartMultiColumn(compressorSettings ? 3 : 1, wxEXPAND);
    {
-      S.AddSpace(borderSize, 0);
-      S.AddCheckBox(XO("I&nput"), settings.showInput)
-         ->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent& evt) {
-            OnCheckbox(
-               evt.IsChecked(), GET_REF(showInput), &HistPanel::ShowInput);
-         });
-      S.AddCheckBox(XO("O&utput"), settings.showOutput)
-         ->Bind(wxEVT_CHECKBOX, [&](wxCommandEvent& evt) {
-            OnCheckbox(
-               evt.IsChecked(), GET_REF(showOutput), &HistPanel::ShowOutput);
-         });
-      /* i18n-hint: when smoothing leads the output level to be momentarily
-       * over the target */
-      S.AddCheckBox(XO("O&vershoot"), settings.showOvershoot)
-         ->Bind(wxEVT_CHECKBOX, [&](wxCommandEvent& evt) {
-            OnCheckbox(
-               evt.IsChecked(), GET_REF(showOvershoot),
-               &HistPanel::ShowOvershoot);
-         });
-      /* i18n-hint: when smoothing leads the output level to be momentarily
-       * under the target */
-      S.AddCheckBox(XO("Under&shoot"), settings.showUndershoot)
-         ->Bind(wxEVT_CHECKBOX, [&](wxCommandEvent& evt) {
-            OnCheckbox(
-               evt.IsChecked(), GET_REF(showUndershoot),
-               &HistPanel::ShowUndershoot);
-         });
+      S.SetStretchyCol(0);
+      AddCheckboxPanel(S, settings);
+      if (compressorSettings)
+      {
+         AddClipIndicator(S);
+         S.AddSpace(rulerWidth, 0);
+      }
    }
-   S.EndHorizontalLay();
-
-   S.AddSpace(0, borderSize);
+   S.EndMultiColumn();
 
    S.SetSizerProportion(1);
-   S.StartMultiColumn(3, wxEXPAND);
+   S.StartMultiColumn(5, wxEXPAND);
    {
+      using namespace DynamicRangeProcessorPanel;
+
       S.SetStretchyCol(1);
       S.SetStretchyRow(0);
       S.AddSpace(borderSize, 0);
       S.Prop(1)
          .Position(wxALIGN_LEFT | wxALIGN_TOP | wxEXPAND)
-         .MinSize({ HistPanel::minWidth, HistPanel::minHeight })
+         .MinSize({ HistPanel::minWidth, graphMinHeight })
          .AddWindow(histPanel);
+
+      S.AddSpace(borderSize, 0);
+
+      const auto onClipped = [this] {
+         if (
+            const auto panel = dynamic_cast<ClipIndicatorPanel*>(
+               wxWindow::FindWindowById(clipIndicatorId, mUIParent)))
+            panel->SetClipped();
+      };
+      S.Prop(1)
+         .Position(wxALIGN_LEFT | wxALIGN_TOP | wxEXPAND)
+         .MinSize({ compressionMeterPanelWidth, graphMinHeight })
+         .AddWindow(safenew CompressionMeterPanel(
+            mUIParent, compressionMeterPanelId, mCompressorInstance,
+            graphMinRangeDb, onClipped))
+         ->Bind(wxEVT_LEFT_UP, [this](wxMouseEvent& evt) {
+            if (
+               const auto panel =
+                  dynamic_cast<CompressionMeterPanel*>(evt.GetEventObject()))
+               panel->Reset();
+            if (
+               const auto indicator = dynamic_cast<ClipIndicatorPanel*>(
+                  wxWindow::FindWindowById(clipIndicatorId, mUIParent)))
+               indicator->Reset();
+         });
 
       S.Prop(1)
          .Position(wxEXPAND | wxALIGN_TOP)
-         .MinSize({ rulerWidth, HistPanel::minHeight })
+         .MinSize({ rulerWidth, graphMinHeight })
          .AddWindow(rulerPanel);
    }
    S.EndMultiColumn();
@@ -233,49 +262,86 @@ void DynamicRangeProcessorEditor::PopulateOrExchange(ShuttleGui& S)
    S.AddSpace(0, borderSize);
 }
 
-void DynamicRangeProcessorEditor::PopulateLimiterUpperHalf(ShuttleGui& S)
+void DynamicRangeProcessorEditor::AddCheckboxPanel(
+   ShuttleGui& S, const DynamicRangeProcessorSettings& settings)
 {
-   if (mIsRealtime)
-   {
-      S.StartMultiColumn(3, wxEXPAND);
-      {
-         S.SetStretchyCol(0);
+#define GET_REF(settingName)                                        \
+   GetCompressorSettings() ? GetCompressorSettings()->settingName : \
+                             GetLimiterSettings()->settingName
 
-         AddSliderPanel(S);
+   S.StartVerticalLay(wxALIGN_BOTTOM, 0);
+   {
+      S.StartHorizontalLay(wxALIGN_LEFT, 0);
+      {
          S.AddSpace(borderSize, 0);
-         AddCompressionMeterPanel(S);
+         const auto input = S.AddCheckBox(XO("I&nput"), settings.showInput);
+         input->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent& evt) {
+            OnCheckbox(
+               evt.IsChecked(), GET_REF(showInput), &HistPanel::ShowInput);
+         });
+         /* i18n-hint: show input on a graph */
+         input->SetName(_("Show input"));
+
+         const auto output = S.AddCheckBox(XO("O&utput"), settings.showOutput);
+         output->Bind(wxEVT_CHECKBOX, [&](wxCommandEvent& evt) {
+            OnCheckbox(
+               evt.IsChecked(), GET_REF(showOutput), &HistPanel::ShowOutput);
+         });
+         /* i18n-hint: show output on a graph */
+         output->SetName(_("Show output"));
+
+         /* i18n-hint: The effective compression, including smoothing. */
+         const auto actual =
+            S.AddCheckBox(XO("A&ctual compression"), settings.showActual);
+         actual->Bind(wxEVT_CHECKBOX, [&](wxCommandEvent& evt) {
+            OnCheckbox(
+               evt.IsChecked(), GET_REF(showActual), &HistPanel::ShowActual);
+         });
+         /* i18n-hint: show actual compression on a graph */
+         actual->SetName(_("Show actual compression"));
+
+         /* i18n-hint: The target compression, before smoothing. */
+         const auto target =
+            S.AddCheckBox(XO("Tar&get compression"), settings.showTarget);
+         target->Bind(wxEVT_CHECKBOX, [&](wxCommandEvent& evt) {
+            OnCheckbox(
+               evt.IsChecked(), GET_REF(showTarget), &HistPanel::ShowTarget);
+         });
+         /* i18n-hint: show target compression on a graph */
+         target->SetName(_("Show target compression"));
+
+#if wxUSE_ACCESSIBILITY
+         // so that name can be set on a standard control
+         safenew WindowAccessible(input);
+         safenew WindowAccessible(output);
+         safenew WindowAccessible(actual);
+         safenew WindowAccessible(target);
+#endif
       }
-      S.EndMultiColumn();
+      S.EndHorizontalLay();
+      S.AddSpace(0, borderSize);
    }
-   else
-      AddSliderPanel(S);
+   S.EndVerticalLay();
 }
 
-void DynamicRangeProcessorEditor::PopulateCompressorUpperHalf(
-   ShuttleGui& S, const CompressorSettings& compressorSettings)
+void DynamicRangeProcessorEditor::AddClipIndicator(ShuttleGui& S)
 {
-   if (mIsRealtime)
-   {
-      S.StartMultiColumn(4, wxEXPAND);
-      {
-         S.SetStretchyCol(0);
-
-         AddSliderPanel(S);
-         S.AddSpace(borderSize, 0);
-         AddCompressionMeterPanel(S);
-         AddCompressionCurvePanel(S, compressorSettings);
-      }
-      S.EndMultiColumn();
-   }
-   else
-   {
-      S.StartMultiColumn(2, wxEXPAND);
-      {
-         S.SetStretchyCol(0);
-         AddSliderPanel(S);
-         AddCompressionCurvePanel(S, compressorSettings);
-      }
-   }
+   constexpr auto width = compressionMeterPanelWidth / 2 - 2;
+   constexpr auto height = compressionMeterPanelWidth / 4;
+   S.MinSize({ width, height })
+      .AddWindow(
+         safenew ClipIndicatorPanel(mUIParent, clipIndicatorId),
+         wxALIGN_RIGHT | wxALIGN_BOTTOM)
+      ->Bind(wxEVT_LEFT_UP, [this](wxMouseEvent& evt) {
+         if (
+            const auto panel = dynamic_cast<CompressionMeterPanel*>(
+               wxWindow::FindWindowById(compressionMeterPanelId, mUIParent)))
+            panel->ResetClipped();
+         if (
+            const auto indicator =
+               dynamic_cast<ClipIndicatorPanel*>(evt.GetEventObject()))
+            indicator->Reset();
+      });
 }
 
 void DynamicRangeProcessorEditor::AddCompressionCurvePanel(
@@ -339,41 +405,6 @@ void DynamicRangeProcessorEditor::AddSliderPanel(ShuttleGui& S)
    S.EndPanel();
 }
 
-void DynamicRangeProcessorEditor::AddCompressionMeterPanel(ShuttleGui& S)
-{
-   S.StartVerticalLay(0);
-   {
-      // Add vertical space above and below to align it with the slider
-      // static boxes.
-      S.AddSpace(0, 11);
-
-      S.SetSizerProportion(1);
-      S.StartMultiColumn(2, wxEXPAND);
-      {
-         S.SetStretchyCol(1);
-         S.SetStretchyRow(0);
-
-         constexpr auto height = 100;
-         S.Prop(1)
-            .Position(wxALIGN_LEFT | wxALIGN_TOP | wxEXPAND)
-            .MinSize({ 30, height })
-            .AddWindow(
-               safenew CompressionMeterPanel(mUIParent, mCompressorInstance));
-
-         S.Prop(1)
-            .Position(wxEXPAND | wxALIGN_TOP)
-            .MinSize({ 30, height })
-            .AddWindow(MakeRulerPanel(
-               mUIParent, wxVERTICAL,
-               DynamicRangeProcessorPanel::compressorMeterRangeDb));
-      }
-      S.EndMultiColumn();
-
-      S.AddSpace(0, 5);
-   }
-   S.EndVerticalLay();
-}
-
 void DynamicRangeProcessorEditor::AddTextboxAndSlider(
    ShuttleGui& S, ExtendedCompressorParameter& setting)
 {
@@ -391,20 +422,43 @@ void DynamicRangeProcessorEditor::AddTextboxAndSlider(
       Publish(EffectSettingChanged {});
    });
 
-   setting.slider = S.Name(setting.attributes.caption)
-                       .Style(wxSL_HORIZONTAL)
-                       .MinSize({ 100, -1 })
-                       .AddSlider(
-                          {}, TextToSliderValue(setting), setting.param->Max(),
-                          setting.param->Min());
+   setting.slider =
+      S.Name(setting.attributes.caption)
+         .Style(wxSL_HORIZONTAL)
+         .MinSize({ 100, -1 })
+         .AddSlider(
+            {}, TextToSliderValue(setting), setting.param->SliderMax(),
+            setting.param->SliderMin());
 
    setting.slider->Bind(wxEVT_SLIDER, [&](wxCommandEvent& evt) {
-      setting.value = SliderToTextValue(evt.GetInt(), setting);
+      setting.value = SliderToTextValue(setting.slider->GetValue(), setting);
       setting.text->GetValidator()->TransferToWindow();
       EnableApply(mUIParent, mUIParent->Validate());
       ValidateUI();
       UpdateUI();
       Publish(EffectSettingChanged {});
+   });
+
+   // For exponential slider, for right/down arrow keys, because
+   // the setting value has precision of 1, ensure that
+   // the change in slider position results a change in value of
+   // at least 0.1, otherwise the slider position and setting value
+   // may not change.
+   setting.slider->Bind(wxEVT_SCROLL_LINEDOWN, [&](wxScrollEvent& evt) {
+      if (setting.attributes.exponentialSlider
+         && setting.value == SliderToTextValue(evt.GetInt(), setting)) {
+         setting.value += 0.1;
+         setting.slider->SetValue(std::round(TextToSliderValue(setting)));
+      }
+   });
+
+   // And similarly for left/up arrow keys.
+   setting.slider->Bind(wxEVT_SCROLL_LINEUP, [&](wxScrollEvent& evt) {
+      if (setting.attributes.exponentialSlider
+         && setting.value == SliderToTextValue(evt.GetInt(), setting)) {
+         setting.value -= 0.1;
+         setting.slider->SetValue(std::round(TextToSliderValue(setting)));
+      }
    });
 }
 
@@ -429,7 +483,7 @@ bool DynamicRangeProcessorEditor::UpdateUI()
       *GetLimiterSettings() = *mAccess.Get().cast<LimiterSettings>();
 
    for (auto& setting : mParameters)
-      setting.slider->SetValue(TextToSliderValue(setting));
+      setting.slider->SetValue(std::round(TextToSliderValue(setting)));
 
    if (
       auto tfPanel =

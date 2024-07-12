@@ -1,3 +1,13 @@
+/*  SPDX-License-Identifier: GPL-2.0-or-later */
+/*!********************************************************************
+
+  Audacity: A Digital Audio Editor
+
+  DynamicRangeProcessorTransferFunctionPanel.cpp
+
+  Matthieu Hodgkinson
+
+**********************************************************************/
 #include "DynamicRangeProcessorTransferFunctionPanel.h"
 #include "AColor.h"
 #include "AllThemeResources.h"
@@ -49,11 +59,7 @@ auto GetBrush(
 {
    using namespace DynamicRangeProcessorPanel;
    constexpr auto w = .75;
-   const wxColor edgeColor(
-      backgroundColor.Red() * w + colorAtKnee.Red() * (1 - w),
-      backgroundColor.Green() * w + colorAtKnee.Green() * (1 - w),
-      backgroundColor.Blue() * w + colorAtKnee.Blue() * (1 - w),
-      backgroundColor.Alpha() * w + colorAtKnee.Alpha() * (1 - w));
+   const wxColor edgeColor = GetColorMix(backgroundColor, colorAtKnee, w);
 
    const auto xf = size.GetWidth() / 2.; // "f" for "focus"
    const auto yf = size.GetHeight() / 2.;
@@ -63,10 +69,10 @@ auto GetBrush(
 }
 
 void DrawTransferFunction(
-   wxPaintDC& dc, const wxSize& panelSize, const CompressorSettings& settings)
+   wxPaintDC& dc, const wxRect& rect, const CompressorSettings& settings)
 {
-   const auto X = panelSize.x;
-   const auto Y = panelSize.y;
+   const auto X = rect.GetWidth();
+   const auto Y = rect.GetHeight();
    const auto xPixelsPerDb =
       1.f * X / DynamicRangeProcessorTransferFunctionPanel::rangeDb;
    const auto yPixelsPerDb =
@@ -74,7 +80,7 @@ void DrawTransferFunction(
 
    std::vector<wxPoint2DDouble> points;
    points.reserve(X);
-   for (int x = 0; x < X; ++x)
+   for (int x = rect.GetX(); x < X; ++x)
    {
       const auto db = WidthPxToDb(x, X, xPixelsPerDb);
       const auto y = HeightDbToPx(
@@ -99,7 +105,7 @@ void DrawTransferFunction(
       path.AddLineToPoint(point);
    });
    path.CloseSubpath();
-   gc->SetBrush(GetBrush(kneeX, kneeY, attackColor, panelSize, *gc));
+   gc->SetBrush(GetBrush(kneeX, kneeY, attackColor, rect.GetSize(), *gc));
    gc->FillPath(path);
 
    // Fill the area below the curve
@@ -110,12 +116,12 @@ void DrawTransferFunction(
       path.AddLineToPoint(point);
    });
    path.CloseSubpath();
-   gc->SetBrush(GetBrush(kneeX, kneeY, releaseColor, panelSize, *gc));
+   gc->SetBrush(GetBrush(kneeX, kneeY, releaseColor, rect.GetSize(), *gc));
    gc->FillPath(path);
 
    // Draw the curve
    const auto gc2 = MakeGraphicsContext(dc);
-   gc2->SetPen(lineColor);
+   gc2->SetPen(wxPen { targetCompressionColor, targetCompressionLineWidth });
    gc2->DrawLines(points.size(), points.data());
 }
 } // namespace
@@ -123,10 +129,11 @@ void DrawTransferFunction(
 void DynamicRangeProcessorTransferFunctionPanel::OnPaint(wxPaintEvent& evt)
 {
    wxPaintDC dc(this);
-   DrawTransferFunction(dc, GetSize(), mCompressorSettings);
+   const auto rect = DynamicRangeProcessorPanel::GetPanelRect(*this);
+   DrawTransferFunction(dc, rect, mCompressorSettings);
    dc.SetPen(DynamicRangeProcessorPanel::lineColor);
    dc.SetBrush(*wxTRANSPARENT_BRUSH);
-   dc.DrawRectangle(GetSize());
+   dc.DrawRectangle(rect);
 }
 
 void DynamicRangeProcessorTransferFunctionPanel::OnSize(wxSizeEvent& evt)

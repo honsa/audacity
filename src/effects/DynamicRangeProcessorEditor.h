@@ -62,6 +62,8 @@ public:
    virtual ~DynamicRangeProcessorParameter() = default;
    virtual double Min() const = 0;
    virtual double Max() const = 0;
+   virtual double SliderMin() const = 0;
+   virtual double SliderMax() const = 0;
    virtual double TextToSlider() const = 0;
 };
 
@@ -100,12 +102,11 @@ public:
    void PopulateOrExchange(ShuttleGui& S);
 
 private:
-   void PopulateLimiterUpperHalf(ShuttleGui& S);
-   void PopulateCompressorUpperHalf(
-      ShuttleGui& S, const CompressorSettings& compressorSettings);
    void AddCompressionCurvePanel(ShuttleGui& S, const CompressorSettings&);
-   void AddCompressionMeterPanel(ShuttleGui& S);
    void AddSliderPanel(ShuttleGui& S);
+   void AddCheckboxPanel(
+      ShuttleGui& S, const DynamicRangeProcessorSettings& settings);
+   void AddClipIndicator(ShuttleGui& S);
 
    virtual const CompressorSettings* GetCompressorSettings() const
    {

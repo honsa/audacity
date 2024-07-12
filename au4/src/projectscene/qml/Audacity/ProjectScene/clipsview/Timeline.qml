@@ -9,6 +9,7 @@ Rectangle {
     id: root
 
     property alias context: timelineContext
+    property alias ruler: timelineRuler
 
     signal clicked(var mouse)
 
@@ -26,8 +27,8 @@ Rectangle {
 
     //! ~~~ TimelineContext ~~~
     //! NOTE See comment in TimelineContext (.h)
-    function onWheel(y) {
-        return timelineContext.onWheel(y)
+    function onWheel(pixelDelta, angleDelta) {
+        return timelineContext.onWheel(pixelDelta, angleDelta)
     }
 
     function onSelection(x1, x2) {
@@ -56,7 +57,7 @@ Rectangle {
     // ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
     TimelineRuler {
-        id: ruler
+        id: timelineRuler
         anchors.fill: parent
         context: timelineContext
     }

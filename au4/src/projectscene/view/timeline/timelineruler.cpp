@@ -13,7 +13,7 @@ constexpr double TICK_ALPHA_MAJOR = 1.0;
 constexpr double TICK_ALPHA_MINOR = 0.5;
 constexpr double LABEL_ALPHA_MAJOR = 1.0;
 constexpr double LABEL_ALPHA_MINOR = 0.75;
-constexpr int LABEL_OFFSET = 3;
+constexpr int LABEL_OFFSET = 2;
 constexpr int LABEL_INTERVAL = 5;
 }
 
@@ -22,7 +22,27 @@ using namespace au::projectscene;
 TimelineRuler::TimelineRuler(QQuickItem* parent)
     : QQuickPaintedItem(parent)
 {
+    setFormatter(configuration()->timelineRulerMode());
+
     uiconfiguration()->currentThemeChanged().onNotify(this, [this]() { update(); });
+    configuration()->timelineRulerModeChanged().onReceive(this, [this](const TimelineRulerMode mode){
+        setFormatter(mode);
+        update();
+    });
+}
+
+IntervalInfo TimelineRuler::intervalInfo()
+{
+    return m_formatter->intervalInfo(m_context);
+}
+
+void TimelineRuler::setFormatter(const TimelineRulerMode mode)
+{
+    if (mode == TimelineRulerMode::MINUTES_AND_SECONDS) {
+        m_formatter = std::make_unique<TimeFormat>();
+    } else {
+        m_formatter = std::make_unique<BeatsMeasuresFormat>();
+    }
 }
 
 void TimelineRuler::paint(QPainter* painter)
@@ -30,35 +50,37 @@ void TimelineRuler::paint(QPainter* painter)
     const qreal w = width();
     const qreal h = height();
 
-    Ticks ticks;
-
     // determine current time interval and prepare ticks
-    TimeIntervalInfo timeInterval = TimeFormat::timeIntervalInfo(m_context->zoom());
-    prepareTickData(ticks, timeInterval, w, h);
+    IntervalInfo interval = m_formatter->intervalInfo(m_context);
+    Ticks ticks = prepareTickData(interval, w, h);
 
     // begin painting
     QPen pen = painter->pen();
-    pen.setWidth(1);
+    pen.setWidth(2);
     pen.setColor(uiconfiguration()->currentTheme().values.value(muse::ui::STROKE_COLOR).toString());
     painter->setPen(pen);
 
     // vertical line (ruler border)
     painter->drawLine(QLineF(0, 0, 0, h));
 
+    pen.setWidth(1);
+    painter->setPen(pen);
     // horizontal line in the middle
     painter->drawLine(QLineF(0, h / 2, w, h / 2));
 
     drawLabels(painter, ticks, w, h);
     drawTicks(painter, ticks);
+    emit ticksChanged(ticks);
 }
 
-void TimelineRuler::prepareTickData(Ticks& ticks, const TimeIntervalInfo& timeInterval, double w, double h)
+Ticks TimelineRuler::prepareTickData(const IntervalInfo& timeInterval, double w, double h)
 {
+    Ticks ticks;
     double value = m_context->frameStartTime();
     double x = 0.0;
 
     // find value and position of the first tick
-    double remainder = fmod(value, timeInterval.minorMinor);
+    double remainder = std::remainder(value, timeInterval.minorMinor);
     if (remainder != 0) {
         x = (timeInterval.minorMinor - remainder) * m_context->zoom();
         value += (timeInterval.minorMinor - remainder);
@@ -79,35 +101,40 @@ void TimelineRuler::prepareTickData(Ticks& ticks, const TimeIntervalInfo& timeIn
     {
         // determine tick type
         TickType tickType;
-        if (tickNumber % static_cast<int>(timeInterval.major / timeInterval.minorMinor) == 0) {
+        double eps = 1.0e-5f;
+        if (std::abs(std::remainder(tickNumber, (timeInterval.major / timeInterval.minorMinor))) < eps) {
             tickType = TickType::MAJOR;
-        } else if (tickNumber % static_cast<int>(timeInterval.minor / timeInterval.minorMinor) == 0) {
+        } else if (std::abs(std::remainder(tickNumber, timeInterval.minor / timeInterval.minorMinor)) < eps) {
             tickType = TickType::MINOR;
         } else {
             tickType = TickType::MINORMINOR;
         }
 
-        QString tickLabel = TimeFormat::label(value, timeInterval, tickType);
+        QString tickLabel = m_formatter->label(value, timeInterval, tickType, m_context);
         int labelsCount = 0;
         if (tickType == TickType::MAJOR || tickType == TickType::MINOR) {
             // add tick with label
-            ticks.append(TickInfo { static_cast<int>(std::round(x) + (labelsCount % LABEL_INTERVAL == 0 ? LABEL_OFFSET : 0)),
+            ticks.append(TickInfo { x + (labelsCount % LABEL_INTERVAL == 0 ? LABEL_OFFSET : 0),
                                     tickLabel,
                                     tickType,
-                                    QLineF(std::round(x), h - 2, std::round(x), h - 1 - tickHeight(tickType)) });
+                                    QLineF(x, h - 2, x, h - 1 - tickHeight(tickType)),
+                                    value });
             labelsCount++;
         } else {
             // add tick without label
-            ticks.append(TickInfo { -1,
+            ticks.append(TickInfo { -1.0,
                                     QString(),
                                     tickType,
-                                    QLineF(std::round(x), h - 2, std::round(x), h - 1 - tickHeight(tickType)) });
+                                    QLineF(x, h - 2, x, h - 1 - tickHeight(tickType)),
+                                    value });
         }
 
         x += m_context->zoom() * timeInterval.minorMinor;
         value += timeInterval.minorMinor;
         tickNumber++;
     }
+
+    return ticks;
 }
 
 void TimelineRuler::drawLabels(QPainter* painter, const Ticks& ticks, double w, double h)
@@ -120,7 +147,7 @@ void TimelineRuler::drawLabels(QPainter* painter, const Ticks& ticks, double w, 
     painter->setPen(pen);
 
     for (qsizetype i = 0; i < ticks.count(); i++) {
-        if (ticks[i].x == -1) {
+        if (ticks[i].x == -1.0) {
             continue;
         }
         labelColor.setAlphaF(ticks[i].tickType == TickType::MAJOR ? LABEL_ALPHA_MAJOR : LABEL_ALPHA_MINOR);
@@ -165,13 +192,14 @@ void TimelineRuler::setTimelineContext(TimelineContext* newContext)
     m_context = newContext;
 
     if (m_context) {
-        connect(m_context, &TimelineContext::frameTimeChanged, this, &TimelineRuler::onFrameTimeChanged);
+        auto updateView = [this] () { update(); };
+
+        connect(m_context, &TimelineContext::frameTimeChanged, this, updateView);
+
+        connect(m_context, &TimelineContext::BPMChanged, this, updateView);
+        connect(m_context, &TimelineContext::timeSigUpperChanged, this, updateView);
+        connect(m_context, &TimelineContext::timeSigLowerChanged, this, updateView);
     }
 
     emit timelineContextChanged();
-}
-
-void TimelineRuler::onFrameTimeChanged()
-{
-    update();
 }

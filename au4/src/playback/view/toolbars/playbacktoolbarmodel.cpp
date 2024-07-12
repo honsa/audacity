@@ -7,6 +7,9 @@
 
 #include "view/toolbars/playbacktoolbarlevelitem.h"
 #include "view/toolbars/playbacktoolbarcontrolitem.h"
+#include "view/toolbars/playbacktoolbartimeitem.h"
+#include "view/toolbars/playbacktoolbarbpmitem.h"
+#include "view/toolbars/playbacktoolbartimesignatureitem.h"
 #include "record/view/toolbars/playbacktoolbarrecordlevelitem.h"
 
 #include "containers.h"
@@ -34,12 +37,18 @@ static const ActionCode REWIND_END_ACTION_CODE("rewind-end");
 static const ActionCode LOOP_ACTION_CODE("loop");
 
 static const ActionCode PLAYBACK_LEVEL("playback-level");
+static const ActionCode PLAYBACK_TIME("playback-time");
+static const ActionCode PLAYBACK_BPM("playback-bpm");
+static const ActionCode PLAYBACK_TIME_SIGNATURE("playback-time-signature");
 static const ActionCode RECORD_LEVEL("record-level");
 
 static PlaybackToolBarModel::ItemType itemType(const ActionCode& actionCode)
 {
     std::map<ActionCode, PlaybackToolBarModel::ItemType> types = {
         { PLAYBACK_LEVEL, PlaybackToolBarModel::PLAYBACK_LEVEL },
+        { PLAYBACK_TIME, PlaybackToolBarModel::PLAYBACK_TIME },
+        { PLAYBACK_BPM, PlaybackToolBarModel::PLAYBACK_BPM },
+        { PLAYBACK_TIME_SIGNATURE, PlaybackToolBarModel::PLAYBACK_TIME_SIGNATURE },
         { RECORD_LEVEL, PlaybackToolBarModel::RECORD_LEVEL },
         { PLAY_ACTION_CODE, PlaybackToolBarModel::PLAYBACK_CONTROL },
         { STOP_ACTION_CODE, PlaybackToolBarModel::PLAYBACK_CONTROL },
@@ -234,27 +243,45 @@ ToolBarItem* PlaybackToolBarModel::makeLocalItem(const ActionCode& actionCode)
 {
     PlaybackToolBarModel::ItemType type = itemType(actionCode);
 
+    if (type == PlaybackToolBarModel::PROJECT_CONTROL) {
+        ToolBarItem* item = AbstractToolBarModel::makeItem(actionCode);
+        item->setType(static_cast<ToolBarItemType::Type>(type));
+        return item;
+    }
+
+    ToolBarItem* result = nullptr;
     const UiAction& action = uiActionsRegister()->action(actionCode);
 
     switch (type) {
     case PlaybackToolBarModel::PLAYBACK_LEVEL:
-        return new PlaybackToolBarLevelItem(action, static_cast<ToolBarItemType::Type>(type), this);
+        result = new PlaybackToolBarLevelItem(action, static_cast<ToolBarItemType::Type>(type), this);
+        break;
+    case PlaybackToolBarModel::PLAYBACK_TIME:
+        result = new PlaybackToolBarTimeItem(action, static_cast<ToolBarItemType::Type>(type), this);
+        break;
+    case PlaybackToolBarModel::PLAYBACK_BPM:
+        result = new PlaybackToolBarBPMItem(action, static_cast<ToolBarItemType::Type>(type), this);
+        break;
+    case PlaybackToolBarModel::PLAYBACK_TIME_SIGNATURE:
+        result = new PlaybackToolBarTimeSignatureItem(action, static_cast<ToolBarItemType::Type>(type), this);
+        break;
     case PlaybackToolBarModel::RECORD_LEVEL:
-        return new record::PlaybackToolBarRecordLevelItem(action, static_cast<ToolBarItemType::Type>(type), this);
-    case au::playback::PlaybackToolBarModel::PLAYBACK_CONTROL: {
+        result = new record::PlaybackToolBarRecordLevelItem(action, static_cast<ToolBarItemType::Type>(type), this);
+        break;
+    case PlaybackToolBarModel::PLAYBACK_CONTROL: {
         PlaybackToolBarControlItem* item = new PlaybackToolBarControlItem(action, static_cast<ToolBarItemType::Type>(type), this);
         item->setIconColor(QColor(uiConfiguration()->currentTheme().values.value(muse::ui::FONT_PRIMARY_COLOR).toString()));
         item->setBackgroundColor(QColor(uiConfiguration()->currentTheme().values.value(muse::ui::BUTTON_COLOR).toString()));
-        return item;
-    }
-    case au::playback::PlaybackToolBarModel::PROJECT_CONTROL: {
-        ToolBarItem* item = AbstractToolBarModel::makeItem(actionCode);
-        item->setType(static_cast<ToolBarItemType::Type>(type));
-        return item;
+        result = std::move(item);
+        break;
     }
     default:
         break;
     }
 
-    return nullptr;
+    if (result) {
+        result->setState(uiActionsRegister()->actionState(actionCode));
+    }
+
+    return result;
 }

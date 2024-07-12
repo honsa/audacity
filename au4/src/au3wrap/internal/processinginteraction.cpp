@@ -6,7 +6,7 @@
 
 #include "domaccessor.h"
 #include "domconverter.h"
-#include "../wxtypes_convert.h"
+#include "wxtypes_convert.h"
 
 #include "log.h"
 
@@ -61,12 +61,49 @@ bool ProcessingInteraction::changeClipTitle(const processing::ClipKey& clipKey, 
     return true;
 }
 
-muse::ValCh<au::processing::ClipKey> ProcessingInteraction::selectedClip() const
+bool ProcessingInteraction::removeClip(const processing::ClipKey& clipKey)
 {
-    return m_selectedClip;
+    WaveTrack* waveTrack = DomAccessor::findWaveTrack(projectRef(), TrackId(clipKey.trackId));
+    IF_ASSERT_FAILED(waveTrack) {
+        return false;
+    }
+
+    std::shared_ptr<WaveClip> clip = DomAccessor::findWaveClip(waveTrack, clipKey.index);
+    IF_ASSERT_FAILED(clip) {
+        return false;
+    }
+
+    clip->Clear(clip->Start(), clip->End());
+
+    processing::ProcessingProjectPtr prj = globalContext()->currentProcessingProject();
+    prj->onClipRemoved(DomConverter::clip(waveTrack, clip.get(), clipKey.index));
+
+    return true;
 }
 
-void ProcessingInteraction::selectClip(const processing::ClipKey& clipKey)
+bool ProcessingInteraction::removeClipData(const processing::ClipKey& clipKey, double begin, double end)
 {
-    m_selectedClip.set(clipKey);
+    WaveTrack* waveTrack = DomAccessor::findWaveTrack(projectRef(), TrackId(clipKey.trackId));
+    IF_ASSERT_FAILED(waveTrack) {
+        return false;
+    }
+
+    std::shared_ptr<WaveClip> clip = DomAccessor::findWaveClip(waveTrack, clipKey.index);
+    IF_ASSERT_FAILED(clip) {
+        return false;
+    }
+
+    processing::secs_t initialClipStart = clip->Start();
+    processing::secs_t initialClipEnd = clip->End();
+
+    clip->Clear(begin, end);
+
+    processing::ProcessingProjectPtr prj = globalContext()->currentProcessingProject();
+    if (begin <= initialClipStart && end >= initialClipEnd) {
+        prj->onClipRemoved(DomConverter::clip(waveTrack, clip.get(), clipKey.index));
+    } else {
+        prj->onClipChanged(DomConverter::clip(waveTrack, clip.get(), clipKey.index));
+    }
+
+    return true;
 }

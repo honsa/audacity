@@ -5,7 +5,9 @@
 #include "global/async/asyncable.h"
 
 #include "modularity/ioc.h"
-#include "processing/iprocessingselectioncontroller.h"
+#include "context/iglobalcontext.h"
+#include "processing/iselectioncontroller.h"
+#include "iprojectsceneconfiguration.h"
 
 //! NOTE This class does two things:
 //! 1. This is a context that is passed to other classes
@@ -25,14 +27,15 @@ class TimelineContext : public QObject, public muse::async::Asyncable
     Q_PROPERTY(double frameStartTime READ frameStartTime NOTIFY frameStartTimeChanged FINAL)
     Q_PROPERTY(double frameEndTime READ frameEndTime NOTIFY frameEndTimeChanged FINAL)
     Q_PROPERTY(double zoom READ zoom WRITE setZoom NOTIFY zoomChanged FINAL)
+    Q_PROPERTY(int BPM READ BPM WRITE setBPM NOTIFY BPMChanged FINAL)
 
-    //! NOTE Can be changed from Qml, directly during selection
-    //! Or via selection controller (if selection was not made from view)
-    Q_PROPERTY(double selectionStartTime READ selectionStartTime WRITE setSelectionStartTime NOTIFY selectionStartTimeChanged FINAL)
-    Q_PROPERTY(double selectionEndTime READ selectionEndTime WRITE setSelectionEndTime NOTIFY selectionEndTimeChanged FINAL)
+    Q_PROPERTY(double selectionStartTime READ selectionStartTime NOTIFY selectionStartTimeChanged FINAL)
+    Q_PROPERTY(double selectionEndTime READ selectionEndTime NOTIFY selectionEndTimeChanged FINAL)
     Q_PROPERTY(bool selectionActive READ selectionActive NOTIFY selectionActiveChanged FINAL)
 
-    muse::Inject<processing::IProcessingSelectionController> processingSelectionController;
+    muse::Inject<context::IGlobalContext> globalContext;
+    muse::Inject<processing::ISelectionController> selectionController;
+    muse::Inject<IProjectSceneConfiguration> configuration;
 
 public:
 
@@ -44,16 +47,25 @@ public:
     double zoom() const;
     void setZoom(double zoom);
 
+    int BPM() const;
+    void setBPM(int BPM);
+
+    int timeSigUpper() const;
+    void setTimeSigUpper(int timeSigUpper);
+
+    int timeSigLower() const;
+    void setTimeSigLower(int timeSigLower);
+
     double selectionStartTime() const;
-    void setSelectionStartTime(double time);
     double selectionEndTime() const;
-    void setSelectionEndTime(double time);
     bool selectionActive() const;
 
     Q_INVOKABLE void init(double frameWidth);
 
     Q_INVOKABLE void onResizeFrameWidth(double frameWidth);
-    Q_INVOKABLE bool onWheel(double y);
+    Q_INVOKABLE void onResizeFrameHeight(double frameHeight);
+
+    Q_INVOKABLE void onWheel(const QPoint& pixelDelta, const QPoint& angleDelta);
 
     Q_INVOKABLE double timeToPosition(double time) const;
     Q_INVOKABLE double positionToTime(double position) const;
@@ -68,12 +80,18 @@ signals:
     void frameTimeChanged(); // any or both together
 
     void zoomChanged();
+    void BPMChanged();
+    void timeSigUpperChanged();
+    void timeSigLowerChanged();
 
     void selectionStartTimeChanged();
     void selectionEndTimeChanged();
     void selectionActiveChanged();
 
+    void shiftViewByY(double dy);
+
 private:
+    void onProjectChanged();
 
     void shiftFrameTimeOnStep(int direction);
     void setFrameStartTime(double newFrameStartTime);
@@ -82,14 +100,23 @@ private:
 
     void changeZoom(int direction);
 
-    void onSelectionTime(double t1, double t2);
+    void setSelectionStartTime(double time);
+    void setSelectionEndTime(double time);
     void updateSelectionActive();
 
+    void updateTimeSignature();
+
     double m_frameWidth = 0.0;
+    double m_frameHeight = 0.0;
+
     double m_frameStartTime = 0.0;
     double m_frameEndTime = 0.0;
 
     double m_zoom = 1.0; // see init
+    int m_BPM = 120;
+    // time signature
+    int m_timeSigUpper = 4;
+    int m_timeSigLower = 4;
 
     processing::secs_t m_selecitonStartTime = -1.0;
     processing::secs_t m_selectionEndTime = -1.0;
