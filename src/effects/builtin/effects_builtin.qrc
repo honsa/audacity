@@ -1,0 +1,10 @@
+<RCC>
+    <qresource prefix="/">
+        <file>common/EffectBase.qml</file>
+        <file>amplify/AmplifyView.qml</file>
+        <file>tonegen/ChirpView.qml</file>
+        <file>tonegen/ToneView.qml</file>
+        <file>general/GeneralEffectView.qml</file>
+        <file>reverb/ReverbView.qml</file>
+    </qresource>
+</RCC>
