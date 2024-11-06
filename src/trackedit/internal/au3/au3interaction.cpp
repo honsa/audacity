@@ -5,12 +5,15 @@
 #include "ProjectRate.h"
 #include "TempoChange.h"
 #include "QualitySettings.h"
+
 #include "global/types/number.h"
+#include "global/concurrency/concurrent.h"
 
 #include "libraries/lib-project/Project.h"
 #include "libraries/lib-wave-track/WaveTrack.h"
 #include "libraries/lib-track/Track.h"
 #include "libraries/lib-wave-track/WaveClip.h"
+#include "libraries/lib-wave-track/TimeStretching.h"
 
 #include "au3wrap/internal/domaccessor.h"
 #include "au3wrap/internal/domconverter.h"
@@ -19,6 +22,7 @@
 
 #include "trackedit/dom/track.h"
 
+#include "defer.h"
 #include "log.h"
 #include "trackediterrors.h"
 #include "translation.h"
@@ -56,6 +60,8 @@ TrackIdList Au3Interaction::pasteIntoNewTracks()
 
         tracksIdsPastedInto.push_back(newTrack.id);
     }
+
+    pushProjectHistoryPasteState();
 
     return tracksIdsPastedInto;
 }
@@ -120,6 +126,11 @@ muse::Ret Au3Interaction::canPasteClips(const TrackIdList& dstTracksIds, secs_t 
     }
 
     return muse::make_ok();
+}
+
+Au3Interaction::Au3Interaction()
+{
+    m_progress = std::make_shared<muse::Progress>();
 }
 
 muse::secs_t Au3Interaction::clipStartTime(const trackedit::ClipKey& clipKey) const
@@ -242,32 +253,40 @@ Au3Interaction::clipStartTimeChanged() const
     return m_clipStartTimeChanged;
 }
 
-bool Au3Interaction::trimTrackData(TrackId trackId, secs_t begin, secs_t end)
+bool Au3Interaction::trimTracksData(const std::vector<TrackId>& tracksIds, secs_t begin, secs_t end)
 {
-    Au3WaveTrack* waveTrack = DomAccessor::findWaveTrack(projectRef(), Au3TrackId(trackId));
-    IF_ASSERT_FAILED(waveTrack) {
-        return false;
+    for (TrackId trackId : tracksIds) {
+        Au3WaveTrack* waveTrack = DomAccessor::findWaveTrack(projectRef(), Au3TrackId(trackId));
+        IF_ASSERT_FAILED(waveTrack) {
+            continue;
+        }
+
+        waveTrack->Trim(begin, end);
+
+        trackedit::ITrackeditProjectPtr prj = globalContext()->currentTrackeditProject();
+        prj->notifyAboutTrackChanged(DomConverter::track(waveTrack));
     }
 
-    waveTrack->Trim(begin, end);
-
-    trackedit::ITrackeditProjectPtr prj = globalContext()->currentTrackeditProject();
-    prj->notifyAboutTrackChanged(DomConverter::track(waveTrack));
+    pushProjectHistoryTracksTrimState(begin, end);
 
     return true;
 }
 
-bool Au3Interaction::silenceTrackData(TrackId trackId, secs_t begin, secs_t end)
+bool Au3Interaction::silenceTracksData(const std::vector<trackedit::TrackId>& tracksIds, secs_t begin, secs_t end)
 {
-    Au3WaveTrack* waveTrack = DomAccessor::findWaveTrack(projectRef(), Au3TrackId(trackId));
-    IF_ASSERT_FAILED(waveTrack) {
-        return false;
+    for (TrackId trackId : tracksIds) {
+        Au3WaveTrack* waveTrack = DomAccessor::findWaveTrack(projectRef(), Au3TrackId(trackId));
+        IF_ASSERT_FAILED(waveTrack) {
+            return false;
+        }
+
+        waveTrack->Silence(begin, end, {});
+
+        trackedit::ITrackeditProjectPtr prj = globalContext()->currentTrackeditProject();
+        prj->notifyAboutTrackChanged(DomConverter::track(waveTrack));
     }
 
-    waveTrack->Silence(begin, end, {});
-
-    trackedit::ITrackeditProjectPtr prj = globalContext()->currentTrackeditProject();
-    prj->notifyAboutTrackChanged(DomConverter::track(waveTrack));
+    pushProjectHistoryTrackSilenceState(begin, end);
 
     return true;
 }
@@ -309,6 +328,154 @@ bool Au3Interaction::changeClipTitle(const trackedit::ClipKey& clipKey, const mu
     return true;
 }
 
+bool Au3Interaction::changeClipPitch(const ClipKey& clipKey, int pitch)
+{
+    WaveTrack* waveTrack = DomAccessor::findWaveTrack(projectRef(), ::TrackId(clipKey.trackId));
+    IF_ASSERT_FAILED(waveTrack) {
+        return false;
+    }
+
+    std::shared_ptr<WaveClip> clip = DomAccessor::findWaveClip(waveTrack, clipKey.clipId);
+    IF_ASSERT_FAILED(clip) {
+        return false;
+    }
+
+    clip->SetCentShift(pitch);
+    LOGD() << "changed pitch of clip: " << clipKey.clipId << ", track: " << clipKey.trackId << ", pitch: " << pitch;
+
+    trackedit::ITrackeditProjectPtr prj = globalContext()->currentTrackeditProject();
+    prj->notifyAboutClipChanged(DomConverter::clip(waveTrack, clip.get()));
+
+    pushProjectHistoryChangeClipPitchState();
+
+    return true;
+}
+
+bool Au3Interaction::resetClipPitch(const ClipKey& clipKey)
+{
+    WaveTrack* waveTrack = DomAccessor::findWaveTrack(projectRef(), ::TrackId(clipKey.trackId));
+    IF_ASSERT_FAILED(waveTrack) {
+        return false;
+    }
+
+    std::shared_ptr<WaveClip> clip = DomAccessor::findWaveClip(waveTrack, clipKey.clipId);
+    IF_ASSERT_FAILED(clip) {
+        return false;
+    }
+
+    clip->SetCentShift(0);
+    LOGD() << "reseted pitch of clip: " << clipKey.clipId << ", track: " << clipKey.trackId;
+
+    trackedit::ITrackeditProjectPtr prj = globalContext()->currentTrackeditProject();
+    prj->notifyAboutClipChanged(DomConverter::clip(waveTrack, clip.get()));
+
+    pushProjectHistoryResetClipPitchState();
+
+    return true;
+}
+
+bool Au3Interaction::changeClipSpeed(const ClipKey& clipKey, double speed)
+{
+    WaveTrack* waveTrack = DomAccessor::findWaveTrack(projectRef(), ::TrackId(clipKey.trackId));
+    IF_ASSERT_FAILED(waveTrack) {
+        return false;
+    }
+
+    std::shared_ptr<WaveClip> clip = DomAccessor::findWaveClip(waveTrack, clipKey.clipId);
+    IF_ASSERT_FAILED(clip) {
+        return false;
+    }
+
+    TimeStretching::SetClipStretchRatio(*waveTrack, *clip, speed);
+    LOGD() << "changed speed of clip: " << clipKey.clipId << ", track: " << clipKey.trackId << ", speed: " << speed;
+
+    trackedit::ITrackeditProjectPtr prj = globalContext()->currentTrackeditProject();
+    prj->notifyAboutClipChanged(DomConverter::clip(waveTrack, clip.get()));
+
+    pushProjectHistoryChangeClipSpeedState();
+
+    return true;
+}
+
+bool Au3Interaction::resetClipSpeed(const ClipKey& clipKey)
+{
+    WaveTrack* waveTrack = DomAccessor::findWaveTrack(projectRef(), ::TrackId(clipKey.trackId));
+    IF_ASSERT_FAILED(waveTrack) {
+        return false;
+    }
+
+    std::shared_ptr<WaveClip> clip = DomAccessor::findWaveClip(waveTrack, clipKey.clipId);
+    IF_ASSERT_FAILED(clip) {
+        return false;
+    }
+
+    TimeStretching::SetClipStretchRatio(*waveTrack, *clip, 1);
+    LOGD() << "reseted speed of clip: " << clipKey.clipId << ", track: " << clipKey.trackId;
+
+    trackedit::ITrackeditProjectPtr prj = globalContext()->currentTrackeditProject();
+    prj->notifyAboutClipChanged(DomConverter::clip(waveTrack, clip.get()));
+
+    pushProjectHistoryResetClipSpeedState();
+
+    return true;
+}
+
+bool Au3Interaction::changeClipOptimizeForVoice(const ClipKey& clipKey, bool optimize)
+{
+    WaveTrack* waveTrack = DomAccessor::findWaveTrack(projectRef(), ::TrackId(clipKey.trackId));
+    IF_ASSERT_FAILED(waveTrack) {
+        return false;
+    }
+
+    std::shared_ptr<WaveClip> clip = DomAccessor::findWaveClip(waveTrack, clipKey.clipId);
+    IF_ASSERT_FAILED(clip) {
+        return false;
+    }
+
+    clip->SetPitchAndSpeedPreset(optimize ? PitchAndSpeedPreset::OptimizeForVoice : PitchAndSpeedPreset::Default);
+    LOGD() << "changed optimize for voice of clip: " << clipKey.clipId << ", track: " << clipKey.trackId << ", optimize: " << optimize;
+
+    trackedit::ITrackeditProjectPtr prj = globalContext()->currentTrackeditProject();
+    prj->notifyAboutClipChanged(DomConverter::clip(waveTrack, clip.get()));
+
+    return true;
+}
+
+void Au3Interaction::renderClipPitchAndSpeed(const ClipKey& clipKey)
+{
+    muse::Concurrent::run([this, clipKey](){
+        m_progress->started.notify();
+
+        muse::ProgressResult result;
+
+        DEFER {
+            m_progress->finished.send(result);
+        };
+
+        WaveTrack* waveTrack = DomAccessor::findWaveTrack(projectRef(), ::TrackId(clipKey.trackId));
+        IF_ASSERT_FAILED(waveTrack) {
+            return;
+        }
+
+        std::shared_ptr<WaveClip> clip = DomAccessor::findWaveClip(waveTrack, clipKey.clipId);
+        IF_ASSERT_FAILED(clip) {
+            return;
+        }
+
+        auto progressCallBack = [this](double progressFraction) {
+            m_progress->progressChanged.send(progressFraction * 1000, 1000, "");
+        };
+
+        waveTrack->ApplyPitchAndSpeed({ { clip->GetPlayStartTime(), clip->GetPlayEndTime() } }, progressCallBack);
+        LOGD() << "apply pitch and speed for clip: " << clipKey.clipId << ", track: " << clipKey.trackId;
+
+        trackedit::ITrackeditProjectPtr prj = globalContext()->currentTrackeditProject();
+        prj->notifyAboutTrackChanged(DomConverter::track(waveTrack)); //! todo: replase with onClipChanged
+
+        pushProjectHistoryRenderClipStretchingState();
+    });
+}
+
 void Au3Interaction::clearClipboard()
 {
     clipboard()->clearTrackData();
@@ -336,10 +503,8 @@ muse::Ret Au3Interaction::pasteFromClipboard(secs_t begin, TrackId destinationTr
     TrackIdList dstTracksIds = determineDestinationTracksIds(tracks, destinationTrackId, tracksNum);
 
     bool newTracksNeeded = false;
-    size_t newTracksCount = 0;
     if (dstTracksIds.size() != tracksNum) {
         newTracksNeeded = true;
-        newTracksCount = tracksNum - dstTracksIds.size();
     }
 
     // check if copied data fits into selected area
@@ -387,6 +552,8 @@ muse::Ret Au3Interaction::pasteFromClipboard(secs_t begin, TrackId destinationTr
     }
 
     selectionController()->setSelectedTracks(dstTracksIds);
+
+    pushProjectHistoryPasteState();
 
     return muse::make_ok();
 }
@@ -507,30 +674,43 @@ bool Au3Interaction::removeClip(const trackedit::ClipKey& clipKey)
         return false;
     }
 
+    secs_t start = clip->Start();
+    secs_t end = clip->End();
+    secs_t duration = end - start;
+
     waveTrack->Clear(clip->Start(), clip->End());
 
     trackedit::ITrackeditProjectPtr prj = globalContext()->currentTrackeditProject();
     prj->notifyAboutTrackChanged(DomConverter::track(waveTrack));
 
+    pushProjectHistoryDeleteState(start, duration);
+
     return true;
 }
 
-bool Au3Interaction::removeClipData(const trackedit::ClipKey& clipKey, secs_t begin, secs_t end)
+bool Au3Interaction::removeClipsData(const std::vector<trackedit::ClipKey>& clipsKeys, secs_t begin, secs_t end)
 {
-    Au3WaveTrack* waveTrack = DomAccessor::findWaveTrack(projectRef(), Au3TrackId(clipKey.trackId));
-    IF_ASSERT_FAILED(waveTrack) {
-        return false;
+    secs_t duration = end - begin;
+    secs_t start = begin;
+
+    for (const ClipKey& clipKey : clipsKeys) {
+        Au3WaveTrack* waveTrack = DomAccessor::findWaveTrack(projectRef(), Au3TrackId(clipKey.trackId));
+        IF_ASSERT_FAILED(waveTrack) {
+            continue;
+        }
+
+        std::shared_ptr<Au3WaveClip> clip = DomAccessor::findWaveClip(waveTrack, clipKey.clipId);
+        IF_ASSERT_FAILED(clip) {
+            continue;
+        }
+
+        waveTrack->Clear(begin, end);
+
+        trackedit::ITrackeditProjectPtr prj = globalContext()->currentTrackeditProject();
+        prj->notifyAboutTrackChanged(DomConverter::track(waveTrack));
     }
 
-    std::shared_ptr<Au3WaveClip> clip = DomAccessor::findWaveClip(waveTrack, clipKey.clipId);
-    IF_ASSERT_FAILED(clip) {
-        return false;
-    }
-
-    waveTrack->Clear(begin, end);
-
-    trackedit::ITrackeditProjectPtr prj = globalContext()->currentTrackeditProject();
-    prj->notifyAboutTrackChanged(DomConverter::track(waveTrack));
+    pushProjectHistoryDeleteState(start, duration);
 
     return true;
 }
@@ -820,6 +1000,8 @@ void Au3Interaction::newMonoTrack()
     prj->notifyAboutTrackAdded(DomConverter::track(track.get()));
 
     selectionController()->setSelectedTracks(TrackIdList(DomConverter::trackId(track->GetId())));
+
+    pushProjectHistoryTrackAddedState();
 }
 
 void Au3Interaction::newStereoTrack()
@@ -840,6 +1022,8 @@ void Au3Interaction::newStereoTrack()
     prj->notifyAboutTrackAdded(DomConverter::track(track));
 
     selectionController()->setSelectedTracks(TrackIdList(DomConverter::trackId(track->GetId())));
+
+    pushProjectHistoryTrackAddedState();
 }
 
 void Au3Interaction::newLabelTrack()
@@ -1155,6 +1339,11 @@ bool Au3Interaction::canRedo()
     return projectHistory()->redoAvailable();
 }
 
+muse::ProgressPtr Au3Interaction::progress() const
+{
+    return m_progress;
+}
+
 void Au3Interaction::pushProjectHistoryDuplicateState()
 {
     projectHistory()->pushHistoryState("Duplicated", "Duplicate");
@@ -1166,4 +1355,63 @@ void Au3Interaction::pushProjectHistorySplitDeleteState(secs_t start, secs_t dur
     ss << "Split-deleted " << duration << " seconds at " << start;
 
     projectHistory()->pushHistoryState(ss.str(), "Split delete");
+}
+
+void Au3Interaction::pushProjectHistoryTrackAddedState()
+{
+    projectHistory()->pushHistoryState("Created new audio track", "New track");
+}
+
+void Au3Interaction::pushProjectHistoryTracksTrimState(secs_t start, secs_t end)
+{
+    std::stringstream ss;
+    ss << "Trim selected audio tracks from " << start << " seconds to " << end << " seconds";
+
+    projectHistory()->pushHistoryState(ss.str(), "Trim Audio");
+}
+
+void Au3Interaction::pushProjectHistoryTrackSilenceState(secs_t start, secs_t end)
+{
+    std::stringstream ss;
+    ss << "Silenced selected tracks for " << start << " seconds at " << end << "";
+
+    projectHistory()->pushHistoryState(ss.str(), "Silence");
+}
+
+void Au3Interaction::pushProjectHistoryPasteState()
+{
+    projectHistory()->pushHistoryState("Pasted from the clipboard", "Paste");
+}
+
+void Au3Interaction::pushProjectHistoryDeleteState(secs_t start, secs_t duration)
+{
+    std::stringstream ss;
+    ss << "Delete " << duration << " seconds at " << start;
+
+    projectHistory()->pushHistoryState(ss.str(), "Delete");
+}
+
+void Au3Interaction::pushProjectHistoryChangeClipPitchState()
+{
+    projectHistory()->pushHistoryState("Pitch Shift", "Changed Pitch Shift");
+}
+
+void Au3Interaction::pushProjectHistoryResetClipPitchState()
+{
+    projectHistory()->pushHistoryState("Reset Clip Pitch", "Reset Clip Pitch");
+}
+
+void Au3Interaction::pushProjectHistoryChangeClipSpeedState()
+{
+    projectHistory()->pushHistoryState("Changed Speed", "Changed Speed");
+}
+
+void Au3Interaction::pushProjectHistoryResetClipSpeedState()
+{
+    projectHistory()->pushHistoryState("Reset Clip Speed", "Reset Clip Speed");
+}
+
+void Au3Interaction::pushProjectHistoryRenderClipStretchingState()
+{
+    projectHistory()->pushHistoryState("Rendered time-stretched audio", "Render");
 }
